@@ -35,6 +35,7 @@ import EmailNotifier from './notifications/EmailNotifier';
 import NotificationClient from './notifications/NotificationClient';
 import NotificationProvider from './notifications/NotificationProvider';
 import Service from './service/Service';
+import TimeoutDeltaProvider from './service/TimeoutDeltaProvider';
 import Sidecar from './sidecar/Sidecar';
 import NodeSwitch from './swap/NodeSwitch';
 import OverpaymentProtector from './swap/OverpaymentProtector';
@@ -589,6 +590,13 @@ class Boltz {
         currency.symbol,
         currency.blake2b === true ? 'unified' : 'legacy',
       );
+      if (
+        currency.blake2b === true &&
+        !TimeoutDeltaProvider.blockTimes.has(currency.symbol)
+      ) {
+        // BLAKE2b chain targets the same 10 minute block interval as BTC
+        TimeoutDeltaProvider.blockTimes.set(currency.symbol, 10);
+      }
 
       try {
         const network = resolveBitcoinNetwork(currency.network);

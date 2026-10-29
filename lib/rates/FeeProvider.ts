@@ -9,6 +9,7 @@ import {
   stringify,
 } from '../Utils';
 import ApiErrors from '../api/Errors';
+import { isBlake2bCurrency } from '../blake2b/SighashMode';
 import ArkClient from '../chain/ArkClient';
 import ElementsClient from '../chain/ElementsClient';
 import { etherDecimals, gweiDecimals } from '../consts/Consts';
@@ -362,7 +363,8 @@ class FeeProvider {
     const feeMap = await this.getFeeEstimation(chainCurrency);
 
     // TODO: avoid hard coding symbols
-    switch (chainCurrency) {
+    // SwapSha: BLAKE2b-chain Bitcoin (XBT) prices fees like BTC.
+    switch (isBlake2bCurrency(chainCurrency) ? 'BTC' : chainCurrency) {
       case 'BTC':
       case 'LTC':
       case ElementsClient.symbol: {

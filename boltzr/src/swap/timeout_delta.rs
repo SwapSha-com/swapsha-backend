@@ -10,6 +10,7 @@ use std::sync::{LazyLock, RwLock};
 use tracing::{debug, instrument};
 
 const LIGHTNING_BUFFER: u64 = 15;
+const BLAKE2B_BLOCK_TIME_MINUTES: f64 = 10.0;
 const CROSS_CHAIN_BUFFER_FACTOR: f64 = 0.25;
 
 /// Map of symbol to block time in minutes
@@ -67,6 +68,16 @@ impl TimeoutDeltaProvider {
             .map_err(|e| anyhow!("failed to write block times: {}", e))?;
 
         for (symbol, currency) in currencies.iter() {
+            // SwapSha: BLAKE2b-chain Bitcoin (XBT) targets the same 10 minute
+            // block interval as SHA-256 Bitcoin.
+            if currency.chain.as_ref().is_some_and(|chain| {
+                chain.sighash_mode() == boltz_core::bitcoin::blake2b::SighashMode::Unified
+            }) {
+                block_times
+                    .entry(symbol.clone())
+                    .or_insert(BLAKE2B_BLOCK_TIME_MINUTES);
+            }
+
             if let Some(evm_manager) = &currency.evm_manager {
                 let block_time = *block_times
                     .get(symbol)
