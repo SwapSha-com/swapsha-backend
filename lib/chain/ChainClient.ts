@@ -115,6 +115,10 @@ class ChainClient extends BaseClient implements IChainClient {
     return this.client.request<BlockVerbose>('getblock', [hash, 2]);
   };
 
+  /** Raw RPC call, used for checks the typed methods do not cover. */
+  public rpc = <T>(method: string, params?: unknown[]): Promise<T> =>
+    this.client.request<T>(method, params as any[]);
+
   public getBlockhash = (height: number): Promise<string> => {
     return this.client.request<string>('getblockhash', [height]);
   };

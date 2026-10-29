@@ -1,5 +1,5 @@
 import type { Musig } from 'boltz-core';
-import { SwapTreeSerializer } from 'boltz-core';
+import { SwapTreeSerializer, cooperativeWitness } from 'boltz-core';
 import type { Transaction as LiquidTransaction } from 'liquidjs-lib';
 import type { ClaimDetails, LiquidClaimDetails } from '../../Core';
 import {
@@ -15,6 +15,7 @@ import type Logger from '../../Logger';
 import type { ConstructedTransaction } from '../../TxView';
 import { TxView } from '../../TxView';
 import { getHexBuffer } from '../../Utils';
+import { sighashModeFor } from '../../blake2b/SighashMode';
 import type { IChainClient } from '../../chain/ChainClient';
 import { SwapType, swapTypeToPrettyString } from '../../consts/Enums';
 import TypedEventEmitter from '../../consts/TypedEventEmitter';
@@ -179,7 +180,16 @@ abstract class CoopSignerBase<
       .aggregatePartials();
 
     if (TxView.isScure(transaction)) {
-      transaction.updateInput(0, { finalScriptWitness: [witness] }, true);
+      transaction.updateInput(
+        0,
+        {
+          finalScriptWitness: cooperativeWitness(
+            witness,
+            sighashModeFor(chainCurrency.symbol),
+          ),
+        },
+        true,
+      );
     } else {
       (transaction as LiquidTransaction).ins[0].witness = [
         Buffer.from(witness),

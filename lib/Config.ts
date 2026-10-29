@@ -70,6 +70,14 @@ type BaseCurrencyConfig<T = ChainConfig> = {
   maxZeroConfRisk?: number;
   maxZeroConfAmount: number;
 
+  /**
+   * SwapSha: this currency is Bitcoin on the BLAKE2b chain. Every transaction
+   * the backend signs for it uses SIGHASH_UNIFIED (0x21), and startup checks
+   * that its node really follows the BLAKE2b chain. Requires
+   * preferredWallet = "core" (the Knots wallet signs with the opt-in).
+   */
+  blake2b?: boolean;
+
   chain: T;
 };
 

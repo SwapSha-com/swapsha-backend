@@ -10,8 +10,10 @@ import {
   OutputType,
   SwapTreeSerializer,
   TaprootUtils,
+  UnifiedSighash,
   constructClaimTransaction as constructClaimTransactionBitcoin,
   constructRefundTransaction as constructRefundTransactionBitcoin,
+  cooperativeSighash,
   detectSwap,
   targetFee,
 } from 'boltz-core';
@@ -41,6 +43,7 @@ import {
   getHexBuffer,
   reverseBuffer,
 } from './Utils';
+import { sighashModeFor } from './blake2b/SighashMode';
 import type { IChainClient } from './chain/ChainClient';
 import {
   CurrencyType,
@@ -295,6 +298,9 @@ export const constructClaimTransaction = (
             wallet.decodeAddress(destinationAddress),
             fee,
             true,
+            undefined,
+            false,
+            sighashModeFor(wallet.symbol),
           ),
         );
       }
@@ -351,6 +357,7 @@ export const constructRefundTransaction = (
             timeoutBlockHeight,
             fee,
             true,
+            sighashModeFor(wallet.symbol),
           ),
         );
       }
@@ -454,6 +461,29 @@ export const hashForWitnessV1 = async (
   if (isBitcoin(currency.type)) {
     const scureTx = tx as ScureTransaction;
     const inputs = await collectBitcoinInputs(currency, scureTx);
+
+    if (sighashModeFor(currency.symbol) === 'unified') {
+      // BLAKE2b chain: hash with SIGHASH_UNIFIED so the MuSig2 result only
+      // verifies on BLAKE2b. Only the default (ALL) hash type is offered.
+      if (hashType !== SigHash.DEFAULT && hashType !== SigHash.ALL) {
+        throw new Error(
+          `${currency.symbol}: unsupported hash type ${hashType} for SIGHASH_UNIFIED`,
+        );
+      }
+      return Buffer.from(
+        leafScript === undefined
+          ? cooperativeSighash(scureTx, index, inputs, 'unified')
+          : UnifiedSighash.unifiedSighash(
+              scureTx,
+              index,
+              UnifiedSighash.SIGHASH_ALL_UNIFIED,
+              inputs,
+              UnifiedSighash.UnifiedScriptType.Tapscript,
+              { leafScript, leafVersion: leafVer },
+            ),
+      );
+    }
+
     return Buffer.from(
       scureTx.preimageWitnessV1(
         index,

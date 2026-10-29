@@ -81,7 +81,7 @@
     "@scure/btc-signer": "^2.2.0",
     "@vulpemventures/secp256k1-zkp": "^3.2.1",
     "async-lock": "^1.4.1",
-    "boltz-core": "^5.0.0",
+    "boltz-core": "https://github.com/SwapSha-com/swapsha-core/releases/download/v5.0.0-swapsha.2/boltz-core-5.0.0-swapsha.2.tgz",
     "colors": "^1.4.0",
     "ethers": "^6.17.0",
     "express": "^5.2.1",

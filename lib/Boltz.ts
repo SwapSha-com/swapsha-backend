@@ -11,6 +11,8 @@ import Prometheus from './Prometheus';
 import { formatError, getVersion } from './Utils';
 import VersionCheck from './VersionCheck';
 import Api from './api/Api';
+import { verifyChainIdentity } from './blake2b/ChainIdentity';
+import { setSighashMode } from './blake2b/SighashMode';
 import ArkClient from './chain/ArkClient';
 import ChainClient, { type IChainClient } from './chain/ChainClient';
 import ElementsClient from './chain/ElementsClient';
@@ -492,6 +494,23 @@ class Boltz {
 
     const service = `${client.symbol} chain`;
 
+    // SwapSha: fail closed if a currency's node is on the other chain. Runs
+    // outside the try below so a mismatch stops startup instead of logging.
+    if (client instanceof ChainClient) {
+      const currencyConfig = this.config.currencies.find(
+        (c) => c.symbol === client.symbol,
+      );
+      if (currencyConfig !== undefined) {
+        this.logger.info(
+          await verifyChainIdentity(
+            client,
+            currencyConfig.blake2b === true,
+            currencyConfig.network,
+          ),
+        );
+      }
+    }
+
     try {
       const blockchainInfo = await client.getBlockchainInfo();
       const networkInfo = await client.getNetworkInfo();
@@ -553,6 +572,24 @@ class Boltz {
     const result = new Map<string, Currency>();
 
     this.config.currencies.forEach((currency) => {
+      if (currency.blake2b === true) {
+        // SwapSha Phase 1: only the Knots wallet is known to sign BLAKE2b
+        // transactions with SIGHASH_UNIFIED, and no Lightning on this chain yet.
+        if (
+          currency.preferredWallet !== 'core' ||
+          (currency.lnds?.length ?? 0) > 0 ||
+          currency.cln !== undefined
+        ) {
+          throw new Error(
+            `${currency.symbol}: blake2b currencies need preferredWallet = "core" and no lnds/cln`,
+          );
+        }
+      }
+      setSighashMode(
+        currency.symbol,
+        currency.blake2b === true ? 'unified' : 'legacy',
+      );
+
       try {
         const network = resolveBitcoinNetwork(currency.network);
         if (network === undefined) {
