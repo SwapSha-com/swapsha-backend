@@ -25,9 +25,13 @@ const mockClient = (opts: {
   Object.defineProperty(client, 'symbol', { value: 'XBT' });
   (client as any).rpc = jest.fn(async (method: string) => {
     if (method === 'getdeploymentinfo') {
+      // Shaped like Knots 29.4.1: blake2b sits beside deployments
       return opts.deployment === undefined
-        ? { deployments: {} }
-        : { deployments: { blake2b: opts.deployment } };
+        ? { deployments: { taproot: { active: true } } }
+        : {
+            deployments: { taproot: { active: true } },
+            blake2b: opts.deployment,
+          };
     }
     if (method === 'getblockheader') return opts.header;
     throw new Error(method);
