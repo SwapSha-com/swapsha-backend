@@ -14,7 +14,7 @@ export const LOG = `${DATA}/crash-backend.log`;
 
 let child: ChildProcess | undefined;
 
-const apiUp = async () => {
+export const apiUp = async () => {
   try {
     return (await fetch(`${API}/swap/chain`)).ok;
   } catch {

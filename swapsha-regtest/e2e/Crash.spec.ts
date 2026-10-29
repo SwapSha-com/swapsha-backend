@@ -16,7 +16,7 @@
  * Run from swapsha-backend, chains up:
  *   SWAPSHA_CRASH=1 npx jest --rootDir . swapsha-regtest/e2e/Crash.spec.ts --runInBand
  */
-import { LOG, crash, start, stop } from './backend';
+import { LOG, apiUp, crash, start, stop } from './backend';
 import {
   BLAKE,
   SHA,
@@ -88,6 +88,11 @@ run('B5: backend crash recovery', () => {
     console.log(`backend started by the test, log: ${LOG}`);
   });
 
+  // If a test fails while the backend is down, the next one still starts clean
+  beforeEach(async () => {
+    if (!(await apiUp())) await start();
+  });
+
   afterAll(stop);
 
   test('1. user locks while the backend is down: backend locks once on restart', async () => {
@@ -123,7 +128,8 @@ run('B5: backend crash recovery', () => {
     await waitFor(swap.id, 'transaction.server.confirmed', BLAKE);
     await crash();
 
-    const claim = await userClaim(swap);
+    // The backend is down, so claim from the lockup we already fetched
+    const claim = await userClaim(swap, before);
     console.log(
       `user XBT claim while down: ${await rpc(BLAKE, 'sendrawtransaction', [claim.hex], '')}`,
     );

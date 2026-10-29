@@ -265,8 +265,12 @@ const taprootUtxo = (
 };
 
 /** User claims the server's lockup on `swap.to` via the script path. */
-export const userClaim = async (swap: CreatedSwap) => {
-  const lock = await serverLockup(swap);
+export const userClaim = async (
+  swap: CreatedSwap,
+  known?: { id: string; hex: string },
+) => {
+  // Pass `known` to claim without asking the backend (it may be down)
+  const lock = known ?? (await serverLockup(swap));
   const claim = constructClaimTransaction(
     [
       {
