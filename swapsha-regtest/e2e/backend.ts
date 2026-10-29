@@ -7,9 +7,12 @@
  */
 import { type ChildProcess, execSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
-import { API, sleep } from './helpers';
+import { API, LIVE, sleep } from './helpers';
 
-const DATA = 'swapsha-regtest/data';
+const DATA = LIVE ? 'swapsha-testnet4/data' : 'swapsha-regtest/data';
+const PORTS = LIVE
+  ? [9100, 9101, 9103, 9104, 9105]
+  : [9000, 9001, 9003, 9004, 9005];
 export const LOG = `${DATA}/crash-backend.log`;
 
 let child: ChildProcess | undefined;
@@ -25,7 +28,7 @@ export const apiUp = async () => {
 /** PIDs listening on our backend ports, from any process (run.sh included). */
 const listeners = (): number[] => {
   const pids = new Set<number>();
-  for (const p of [9000, 9001, 9003, 9004, 9005]) {
+  for (const p of PORTS) {
     try {
       execSync(`lsof -ti tcp:${p} -sTCP:LISTEN`, { encoding: 'utf8' })
         .split('\n')

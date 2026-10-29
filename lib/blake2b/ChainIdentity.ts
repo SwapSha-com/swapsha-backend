@@ -1,6 +1,34 @@
-import { BlockHeader } from 'boltz-core';
+import { BlockHeader, Networks } from 'boltz-core';
 import { formatError } from '../Utils';
 import type ChainClient from '../chain/ChainClient';
+import { resolveBitcoinNetwork } from '../consts/BitcoinNetworks';
+
+type NetworkKind = 'mainnet' | 'testnet' | 'regtest';
+
+/**
+ * Currency configs name networks the boltz-core way ("bitcoinMainnet",
+ * "bitcoinTestnet", "bitcoinRegtest"), the short way ("mainnet") or the v4 way
+ * ("bitcoin"). All of them must land on the same answer, or the mainnet guard
+ * below can be skipped by spelling. Unknown names fail closed.
+ */
+export const networkKind = (name: string): NetworkKind => {
+  const lower = name.toLowerCase();
+  if (lower === 'mainnet') return 'mainnet';
+  if (lower === 'testnet' || lower === 'testnet4') return 'testnet';
+  if (lower === 'regtest') return 'regtest';
+  const resolved = resolveBitcoinNetwork(name);
+  if (resolved === Networks.bitcoin) return 'mainnet';
+  if (resolved === Networks.testnet) return 'testnet';
+  if (resolved === Networks.regtest) return 'regtest';
+  throw new ChainIdentityError(`unknown network "${name}"`);
+};
+
+/** What getblockchaininfo.chain may say for each configured network. */
+const NODE_CHAINS: Record<NetworkKind, string[]> = {
+  mainnet: ['main'],
+  testnet: ['testnet4', 'test', 'signet'],
+  regtest: ['regtest'],
+};
 
 type Deployment = { height?: number; active?: boolean };
 
@@ -43,7 +71,16 @@ export const verifyChainIdentity = async (
   }
   const deployment = info.blake2b ?? info.deployments?.blake2b;
   const active = deployment?.active === true;
-  const isMainnet = network.toLowerCase() === 'mainnet';
+  const kind = networkKind(network);
+  const isMainnet = kind === 'mainnet';
+
+  // The node must be on the network the config says, not just the right PoW
+  const { chain } = await client.rpc<{ chain: string }>('getblockchaininfo');
+  if (!NODE_CHAINS[kind].includes(chain)) {
+    throw new ChainIdentityError(
+      `${symbol} is configured for ${network} but its node is on "${chain}"`,
+    );
+  }
 
   if (!expectBlake2b) {
     if (active) {
@@ -75,6 +112,17 @@ export const verifyChainIdentity = async (
   if (!header.isV2 || BlockHeader.blockHashHex(header) !== forkHash) {
     throw new ChainIdentityError(
       `${symbol} fork block ${deployment.height} is not a valid v2 BLAKE2b header`,
+    );
+  }
+
+  // BLAKE2b exists on testnet4 only, at a fixed height
+  if (
+    kind === 'testnet' &&
+    (chain !== 'testnet4' ||
+      deployment.height !== BlockHeader.TESTNET4_FORK_HEIGHT)
+  ) {
+    throw new ChainIdentityError(
+      `${symbol} BLAKE2b fork on "${chain}" at ${deployment.height}; expected testnet4 at ${BlockHeader.TESTNET4_FORK_HEIGHT}`,
     );
   }
 

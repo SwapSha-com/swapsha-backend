@@ -31,6 +31,7 @@ import {
 } from './backend';
 import {
   BLAKE,
+  LIVE,
   SHA,
   acceptWhenFinal,
   api,
@@ -46,7 +47,9 @@ const FORK = 200;
 // Strip the logger's terminal colours from captured lines
 // eslint-disable-next-line no-control-regex
 const ANSI = /\u001b\[[0-9;]*m/g;
-const run = process.env.SWAPSHA_GUARD === '1' ? describe : describe.skip;
+// Needs pre-fork coins and mining, so regtest only
+const run =
+  process.env.SWAPSHA_GUARD === '1' && !LIVE ? describe : describe.skip;
 
 const loadOrCreate = async (nodePort: number, wallet: string) => {
   try {

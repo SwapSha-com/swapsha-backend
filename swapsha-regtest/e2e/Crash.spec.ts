@@ -20,6 +20,7 @@ import { LOG, apiUp, crash, start, stop } from './backend';
 import {
   BLAKE,
   SHA,
+  TEST_TIMEOUT,
   accept,
   createSwap,
   describeSigs,
@@ -79,7 +80,7 @@ const serverLockupsTo = async (address: string) => {
 };
 
 run('B5: backend crash recovery', () => {
-  jest.setTimeout(900_000);
+  jest.setTimeout(TEST_TIMEOUT);
 
   beforeAll(async () => {
     await ensureUserWallets();

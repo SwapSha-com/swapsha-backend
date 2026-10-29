@@ -8,6 +8,10 @@
  * Run from swapsha-backend:
  *   npx jest --rootDir . swapsha-regtest/e2e --runInBand
  *
+ * On testnet4 (nodes from swapsha_testnet4.sh, backend from
+ * ./swapsha-testnet4/run.sh), the same tests wait for real blocks:
+ *   SWAPSHA_NET=testnet4 npx jest --rootDir . swapsha-regtest/e2e/ChainSwap.spec.ts --runInBand
+ *
  * The property every test checks: nothing the swap puts on one chain can be
  * valid on the other. HTLC spends signed by SwapSha's own code on the XBT side
  * always carry SIGHASH_UNIFIED (0x21). Wallet-funded transactions are safe
@@ -15,13 +19,16 @@
  */
 import {
   BLAKE,
+  LIVE,
   SHA,
+  TEST_TIMEOUT,
   accept,
   acceptWhenFinal,
   api,
   createSwap,
   describeSigs,
   ensureUserWallets,
+  expectInvalidOn,
   findSpend,
   lockUser,
   lockUserWithPreForkCoin,
@@ -44,7 +51,7 @@ const expectUnified = (witnessSig: Uint8Array) => {
 };
 
 describe('B5: chain swaps between BTC (SHA-256) and XBT (BLAKE2b)', () => {
-  jest.setTimeout(600_000);
+  jest.setTimeout(TEST_TIMEOUT);
 
   beforeAll(ensureUserWallets);
 
@@ -92,9 +99,7 @@ describe('B5: chain swaps between BTC (SHA-256) and XBT (BLAKE2b)', () => {
       `server BTC lockup ${lock.id}: ${describeSigs(parseTx(lock.hex))}`,
     );
     // Funded from post-fork coins, so it cannot exist on the BLAKE2b chain
-    const lockOnBlake = await accept(BLAKE, lock.hex);
-    expect(lockOnBlake.allowed).toBe(false);
-    expect(lockOnBlake['reject-reason']).toMatch(/missing-inputs/);
+    await expectInvalidOn(BLAKE, lock.hex);
 
     await mine(SHA);
     await waitFor(swap.id, 'transaction.server.confirmed', SHA);
@@ -155,18 +160,21 @@ describe('B5: chain swaps between BTC (SHA-256) and XBT (BLAKE2b)', () => {
     await mine(SHA);
   });
 
-  test('D18: backend refuses a BTC lockup that is replayable onto BLAKE2b', async () => {
-    const swap = await createSwap('BTC', 'XBT');
-    const { raw } = await lockUserWithPreForkCoin(swap);
-    // Precondition: this lockup really is valid on the BLAKE2b chain
-    expect((await acceptWhenFinal(BLAKE, raw)).allowed).toBe(true);
+  // Needs pre-fork coins, which exist only on regtest here
+  (LIVE ? describe.skip : describe)('D18 (regtest only)', () => {
+    test('D18: backend refuses a BTC lockup that is replayable onto BLAKE2b', async () => {
+      const swap = await createSwap('BTC', 'XBT');
+      const { raw } = await lockUserWithPreForkCoin(swap);
+      // Precondition: this lockup really is valid on the BLAKE2b chain
+      expect((await acceptWhenFinal(BLAKE, raw)).allowed).toBe(true);
 
-    await waitFor(swap.id, 'transaction.lockupFailed', SHA, [
-      'transaction.lockupFailed',
-    ]);
-    const info = await api<{ failureReason?: string }>(`/swap/${swap.id}`);
-    console.log(`D18 refusal: ${info.failureReason}`);
-    expect(info.failureReason).toContain('REPLAY_FLAGGED');
-    await expect(serverLockup(swap)).rejects.toThrow();
+      await waitFor(swap.id, 'transaction.lockupFailed', SHA, [
+        'transaction.lockupFailed',
+      ]);
+      const info = await api<{ failureReason?: string }>(`/swap/${swap.id}`);
+      console.log(`D18 refusal: ${info.failureReason}`);
+      expect(info.failureReason).toContain('REPLAY_FLAGGED');
+      await expect(serverLockup(swap)).rejects.toThrow();
+    });
   });
 });

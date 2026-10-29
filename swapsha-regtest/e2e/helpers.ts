@@ -18,9 +18,23 @@ import {
 } from 'boltz-core';
 import { randomBytes } from 'node:crypto';
 
-export const API = 'http://127.0.0.1:9001/v2';
-export const SHA = 18443;
-export const BLAKE = 18543;
+/**
+ * SWAPSHA_NET=testnet4 runs the same suites against the public testnet4
+ * nodes from swapsha_testnet4.sh and the backend from swapsha-testnet4/run.sh.
+ * Nothing can be mined there, so mine() and mineTo() wait for real blocks.
+ */
+export const NET: 'regtest' | 'testnet4' =
+  process.env.SWAPSHA_NET === 'testnet4' ? 'testnet4' : 'regtest';
+export const LIVE = NET === 'testnet4';
+
+export const API = LIVE
+  ? 'http://127.0.0.1:9101/v2'
+  : 'http://127.0.0.1:9001/v2';
+export const SHA = LIVE ? 48332 : 18443;
+export const BLAKE = LIVE ? 48432 : 18543;
+
+/** Jest timeout per test: refunds on testnet4 wait for real timeouts. */
+export const TEST_TIMEOUT = LIVE ? 12 * 60 * 60 * 1000 : 600_000;
 export const port = (symbol: 'BTC' | 'XBT') => (symbol === 'BTC' ? SHA : BLAKE);
 export const modeOf = (symbol: 'BTC' | 'XBT'): SighashMode =>
   symbol === 'XBT' ? 'unified' : 'legacy';
@@ -64,13 +78,38 @@ export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export const height = (nodePort: number) =>
   rpc<number>(nodePort, 'getblockcount');
 
-export const mine = async (nodePort: number, blocks = 1) =>
-  rpc(nodePort, 'generatetoaddress', [
+const chainName = (nodePort: number) => (nodePort === SHA ? 'BTC' : 'XBT');
+
+/** testnet4: wait until `nodePort` reaches `target`, logging every new block. */
+const waitForHeight = async (nodePort: number, target: number) => {
+  let last = await height(nodePort);
+  if (last >= target) return;
+  console.log(
+    `waiting for ${chainName(nodePort)} block ${target} (now ${last}, ~${(target - last) * 10} min)`,
+  );
+  while (last < target) {
+    await sleep(15_000);
+    const now = await height(nodePort);
+    if (now !== last) {
+      console.log(`${chainName(nodePort)} block ${now} of ${target}`);
+      last = now;
+    }
+  }
+};
+
+export const mine = async (nodePort: number, blocks = 1) => {
+  if (LIVE) {
+    await waitForHeight(nodePort, (await height(nodePort)) + blocks);
+    return;
+  }
+  await rpc(nodePort, 'generatetoaddress', [
     blocks,
     await rpc<string>(nodePort, 'getnewaddress'),
   ]);
+};
 
 export const mineTo = async (nodePort: number, target: number) => {
+  if (LIVE) return waitForHeight(nodePort, target);
   const have = await height(nodePort);
   if (have < target) await mine(nodePort, target - have);
 };
@@ -95,20 +134,47 @@ export const waitFor = async (
   minePort?: number,
   allow: string[] = [],
 ) => {
-  for (let i = 0; i < 90; i++) {
+  // testnet4: no mining, poll for up to 3 hours (a few slow blocks)
+  const polls = LIVE ? 3 * 60 * 6 : 90;
+  const every = LIVE ? 10_000 : 1000;
+  let seen = '';
+  for (let i = 0; i < polls; i++) {
     const s = await status(id);
     if (s === want) return;
+    if (LIVE && s !== seen) {
+      console.log(`swap ${id}: ${s} (waiting for ${want})`);
+      seen = s;
+    }
     if (FAILED.includes(s) && !allow.includes(s)) {
       const info = await api<Record<string, unknown>>(`/swap/${id}`);
       throw new Error(`swap ${id} reached ${s}: ${JSON.stringify(info)}`);
     }
-    if (minePort !== undefined && i % 5 === 4) await mine(minePort);
-    await sleep(1000);
+    if (!LIVE && minePort !== undefined && i % 5 === 4) await mine(minePort);
+    await sleep(every);
   }
   throw new Error(`swap ${id} stuck at ${await status(id)}, wanted ${want}`);
 };
 
 export const ensureUserWallets = async () => {
+  if (LIVE) {
+    // testnet4: coins come from faucets and the community, not from mining
+    const missing: string[] = [];
+    for (const p of [SHA, BLAKE]) {
+      try {
+        await rpc(p, 'loadwallet', ['user'], '');
+      } catch {
+        // already loaded, or created by swapsha_testnet4.sh wallets
+      }
+      const balance = await rpc<number>(p, 'getbalance');
+      if (balance < 0.005) {
+        missing.push(
+          `${chainName(p)} user wallet has ${balance}, needs 0.005: send testnet4 coins to ${await rpc<string>(p, 'getnewaddress', ['', 'bech32'])}`,
+        );
+      }
+    }
+    if (missing.length > 0) throw new Error(missing.join('\n'));
+    return;
+  }
   for (const p of [SHA, BLAKE]) {
     try {
       await rpc(p, 'loadwallet', ['user'], '');
@@ -235,7 +301,7 @@ export const findSpend = async (
 
 const address = async (nodePort: number) =>
   OutScript.encode(
-    Address(Networks.regtest).decode(
+    Address(LIVE ? Networks.testnet : Networks.regtest).decode(
       await rpc<string>(nodePort, 'getnewaddress'),
     )!,
   );
@@ -433,4 +499,24 @@ export const acceptWhenFinal = async (nodePort: number, raw: string) => {
   );
   if (locktime < 500_000_000) await mineTo(nodePort, locktime + 1);
   return accept(nodePort, raw);
+};
+
+/**
+ * Assert a transaction from the other chain is not valid on `nodePort`.
+ * regtest: the reason must be missing inputs. testnet4: the BLAKE2b chain
+ * runs thousands of blocks behind SHA-256, so a SHA-256 transaction whose
+ * nLockTime is the SHA-256 tip stays non-final there for weeks and nothing can
+ * be mined to get past it. Then non-final is accepted and logged; that the
+ * coins exist on one chain only is what the D26 startup guard proved.
+ */
+export const expectInvalidOn = async (nodePort: number, raw: string) => {
+  const result = await accept(nodePort, raw);
+  console.log(
+    `on ${chainName(nodePort)}: allowed=${result.allowed} ${result['reject-reason'] ?? ''}`,
+  );
+  expect(result.allowed).toBe(false);
+  expect(result['reject-reason']).toMatch(
+    LIVE ? /missing-inputs|non-final|script-verify/ : /missing-inputs/,
+  );
+  return result;
 };

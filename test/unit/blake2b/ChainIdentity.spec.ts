@@ -1,5 +1,6 @@
 import {
   ChainIdentityError,
+  networkKind,
   verifyChainIdentity,
 } from '../../../lib/blake2b/ChainIdentity';
 import ChainClient from '../../../lib/chain/ChainClient';
@@ -20,6 +21,7 @@ const mockClient = (opts: {
   deployment?: { height: number; active: boolean };
   header?: string;
   hash?: string;
+  chain?: string;
 }) => {
   const client = Object.create(ChainClient.prototype) as ChainClient;
   Object.defineProperty(client, 'symbol', { value: 'XBT' });
@@ -34,6 +36,9 @@ const mockClient = (opts: {
           };
     }
     if (method === 'getblockheader') return opts.header;
+    if (method === 'getblockchaininfo') {
+      return { chain: opts.chain ?? 'regtest' };
+    }
     throw new Error(method);
   });
   (client as any).getBlockhash = jest.fn(async () => opts.hash);
@@ -122,7 +127,10 @@ describe('verifyChainIdentity', () => {
   test('refuses BLAKE2b mainnet unless explicitly allowed', async () => {
     await expect(
       verifyChainIdentity(
-        mockClient({ deployment: { height: 961640, active: true } }),
+        mockClient({
+          deployment: { height: 961640, active: true },
+          chain: 'main',
+        }),
         true,
         'mainnet',
       ),
@@ -137,10 +145,81 @@ describe('verifyChainIdentity', () => {
           deployment: { height: 961640, active: true },
           header: V2_HEADER,
           hash: V2_HASH,
+          chain: 'main',
         }),
         true,
         'mainnet',
       ),
     ).rejects.toThrow('not the BLAKE2b mainnet fork block');
+  });
+
+  test.each([
+    ['mainnet', 'mainnet'],
+    ['bitcoinMainnet', 'mainnet'],
+    ['bitcoin', 'mainnet'],
+    ['bitcoinTestnet', 'testnet'],
+    ['testnet', 'testnet'],
+    ['bitcoinRegtest', 'regtest'],
+  ])('network name %s is %s', (name, kind) => {
+    expect(networkKind(name)).toBe(kind);
+  });
+
+  test('fails closed on an unknown network name', () => {
+    expect(() => networkKind('bitcoinMoon')).toThrow(ChainIdentityError);
+  });
+
+  test('the mainnet guard holds for the boltz-core spelling too', async () => {
+    await expect(
+      verifyChainIdentity(
+        mockClient({
+          deployment: { height: 961640, active: true },
+          chain: 'main',
+        }),
+        true,
+        'bitcoinMainnet',
+      ),
+    ).rejects.toThrow('Mainnet stays off until Phase 5');
+  });
+
+  test('refuses a node on a different network than configured', async () => {
+    await expect(
+      verifyChainIdentity(
+        mockClient({ chain: 'testnet4' }),
+        false,
+        'bitcoinRegtest',
+      ),
+    ).rejects.toThrow(
+      'configured for bitcoinRegtest but its node is on "testnet4"',
+    );
+  });
+
+  test('accepts the testnet4 BLAKE2b fork at 150,308', async () => {
+    await expect(
+      verifyChainIdentity(
+        mockClient({
+          deployment: { height: 150308, active: true },
+          header: V2_HEADER,
+          hash: V2_HASH,
+          chain: 'testnet4',
+        }),
+        true,
+        'bitcoinTestnet',
+      ),
+    ).resolves.toContain('fork block 150308');
+  });
+
+  test('refuses a testnet BLAKE2b fork at any other height', async () => {
+    await expect(
+      verifyChainIdentity(
+        mockClient({
+          deployment: { height: 200, active: true },
+          header: V2_HEADER,
+          hash: V2_HASH,
+          chain: 'testnet4',
+        }),
+        true,
+        'bitcoinTestnet',
+      ),
+    ).rejects.toThrow('expected testnet4 at 150308');
   });
 });
