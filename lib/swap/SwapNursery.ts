@@ -1253,6 +1253,7 @@ class SwapNursery extends TypedEventEmitter<SwapNurseryEvents> {
         lockupId,
         await receivingClient.getRawTransaction(lockupId),
         sendingCurrency.chainClient,
+        receivingClient,
       );
       if (replay !== undefined) {
         this.logger.error(

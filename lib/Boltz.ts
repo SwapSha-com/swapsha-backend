@@ -15,7 +15,8 @@ import {
   blake2bForkHeight,
   verifyChainIdentity,
 } from './blake2b/ChainIdentity';
-import { verifyPostForkCoins } from './blake2b/ProviderCoins';
+import { verifyProviderCoins } from './blake2b/ProviderCoins';
+import { setReplayForkHeight } from './blake2b/ReplayGuard';
 import { setSighashMode } from './blake2b/SighashMode';
 import ArkClient from './chain/ArkClient';
 import ChainClient, { type IChainClient } from './chain/ChainClient';
@@ -355,9 +356,10 @@ class Boltz {
           this.currencies.get(blake2bCurrency.symbol)!
             .chainClient as ChainClient,
         );
-        // Both sides: a pre-fork coin exists on both chains, and the Knots
-        // wallet does not opt in on Taproot key-path spends, so spending one
-        // from either wallet could be replayed onto the other chain.
+        setReplayForkHeight(forkHeight);
+        // Both sides: a coin that also exists on the other chain can be
+        // spent there by replaying our transaction (D26).
+        const symbols = this.config.currencies.map((c) => c.symbol);
         for (const currencyConfig of this.config.currencies) {
           if (forkHeight === undefined) {
             continue;
@@ -365,8 +367,17 @@ class Boltz {
           const client = this.currencies.get(
             currencyConfig.symbol,
           )?.chainClient;
-          if (client !== undefined) {
-            this.logger.info(await verifyPostForkCoins(client, forkHeight));
+          const otherSymbol = symbols.find((s) => s !== currencyConfig.symbol);
+          const other =
+            otherSymbol === undefined
+              ? undefined
+              : this.currencies.get(otherSymbol)?.chainClient;
+          if (client !== undefined && other !== undefined) {
+            this.logger.info(
+              await verifyProviderCoins(client, other, forkHeight, {
+                isBlake2b: currencyConfig.blake2b === true,
+              }),
+            );
           }
         }
       }

@@ -1,4 +1,5 @@
 import type { IChainClient } from '../chain/ChainClient';
+import { classifyCoin } from './ProviderCoins';
 import { isBlake2bCurrency } from './SighashMode';
 
 /**
@@ -14,9 +15,22 @@ import { isBlake2bCurrency } from './SighashMode';
  * - would it accept the transaction now? (replayable)
  *
  * Either answer refuses the swap; the user refunds their lockup after the
- * timeout. Missing inputs or an invalid signature there means the transaction
- * can only ever exist on its own chain.
+ * timeout. An invalid signature there means the transaction can only ever
+ * exist on its own chain.
+ *
+ * Missing inputs is not enough on its own: the inputs may come from a
+ * transaction that is itself replayable but has not been replayed yet. So on
+ * missing inputs the backend walks the lockup's ancestry on its own chain
+ * (classifyCoin, the same walk as the D26 wallet guard) and refuses unless
+ * the lockup provably exists on its own chain only.
  */
+
+let forkHeight: number | undefined;
+
+/** Set once at startup, from the BLAKE2b node's deployment info. */
+export const setReplayForkHeight = (height: number | undefined) => {
+  forkHeight = height;
+};
 export const isReplayPair = (symbolA: string, symbolB: string): boolean =>
   isBlake2bCurrency(symbolA) !== isBlake2bCurrency(symbolB);
 
@@ -24,6 +38,7 @@ export const checkLockupReplay = async (
   lockupTransactionId: string,
   lockupTransactionHex: string,
   otherChain: IChainClient,
+  ownChain?: IChainClient,
 ): Promise<string | undefined> => {
   const other = otherChain.symbol;
 
@@ -42,6 +57,28 @@ export const checkLockupReplay = async (
   const reason = result?.['reject-reason'] ?? '';
   if (/already|txn-already/i.test(reason)) {
     return `user lockup ${lockupTransactionId} is already in the ${other} mempool (replayed)`;
+  }
+
+  if (ownChain === undefined) return undefined;
+
+  if (forkHeight === undefined) {
+    return `user lockup ${lockupTransactionId}: fork height unknown, cannot prove it exists on the ${ownChain.symbol} chain only`;
+  }
+
+  try {
+    const { blocks } = await ownChain.getBlockchainInfo();
+    const { verdict, reason: why } = await classifyCoin(
+      ownChain,
+      forkHeight,
+      blocks,
+      lockupTransactionId,
+      { isBlake2b: isBlake2bCurrency(ownChain.symbol) },
+    );
+    if (verdict === 'shared') {
+      return `user lockup ${lockupTransactionId} is replayable onto the ${other} chain once its ancestry is replayed: ${why}`;
+    }
+  } catch (error) {
+    return `user lockup ${lockupTransactionId}: ${(error as Error).message ?? error}`;
   }
 
   return undefined;
