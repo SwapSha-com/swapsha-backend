@@ -324,3 +324,61 @@ export const accept = async (nodePort: number, txHex: string) =>
       '',
     )
   )[0];
+
+/** Witness signature length and hash-type byte per input, for logging. */
+export const describeSigs = (tx: Transaction) =>
+  Array.from({ length: tx.inputsLength }, (_, i) => {
+    const sig = (tx.getInput(i).finalScriptWitness ?? [])[0];
+    if (sig === undefined) return 'no-witness';
+    if (sig.length === 64) return '64B schnorr (SIGHASH_DEFAULT, no opt-in)';
+    return `${sig.length}B 0x${sig[sig.length - 1].toString(16).padStart(2, '0')}`;
+  }).join(', ');
+
+/**
+ * Lock BTC for `swap` with a coin mined BEFORE the fork, signed the old way.
+ * That transaction is valid on the BLAKE2b chain too: the replay D18 exists
+ * to catch.
+ */
+export const lockUserWithPreForkCoin = async (
+  swap: CreatedSwap,
+  forkHeight = 200,
+) => {
+  const tip = await height(SHA);
+  const utxos = await rpc<
+    { txid: string; vout: number; amount: number; confirmations: number }[]
+  >(SHA, 'listunspent', [1], 'prefork');
+  const coin = utxos.find(
+    (u) => tip - u.confirmations + 1 < forkHeight && u.amount > 0.01,
+  );
+  if (coin === undefined)
+    throw new Error('no pre-fork coin left in the prefork wallet');
+  const { psbt } = await rpc<{ psbt: string }>(
+    SHA,
+    'walletcreatefundedpsbt',
+    [
+      [{ txid: coin.txid, vout: coin.vout }],
+      [{ [swap.lockupDetails.lockupAddress]: swap.lockupDetails.amount / 1e8 }],
+      0,
+      { add_inputs: false, fee_rate: 10 },
+    ],
+    'prefork',
+  );
+  const signed = await rpc<{ psbt: string }>(
+    SHA,
+    'walletprocesspsbt',
+    [psbt],
+    'prefork',
+  );
+  const { hex: raw } = await rpc<{ hex: string }>(
+    SHA,
+    'finalizepsbt',
+    [signed.psbt],
+    'prefork',
+  );
+  const txid = await rpc<string>(SHA, 'sendrawtransaction', [raw], '');
+  console.log(
+    `user BTC lockup from pre-fork coin ${coin.txid}:${coin.vout}: ${txid}`,
+  );
+  await mine(SHA);
+  return { txid, raw };
+};

@@ -8,20 +8,22 @@
  * Run from swapsha-backend:
  *   npx jest --rootDir . swapsha-regtest/e2e --runInBand
  *
- * The user side is played by these tests. Every check that matters for
- * replay protection is on the XBT side: whatever is signed there (by the user,
- * by the backend's Knots wallet, or by the backend's swap code) must carry
- * SIGHASH_UNIFIED, 0x21.
+ * The property every test checks: nothing the swap puts on one chain can be
+ * valid on the other. HTLC spends signed by SwapSha's own code on the XBT side
+ * always carry SIGHASH_UNIFIED (0x21). Wallet-funded transactions are safe
+ * either because they opted in or because their coins exist on one chain only.
  */
 import {
   BLAKE,
   SHA,
   accept,
+  api,
   createSwap,
+  describeSigs,
   ensureUserWallets,
   findSpend,
-  hashTypes,
   lockUser,
+  lockUserWithPreForkCoin,
   mine,
   mineTo,
   parseTx,
@@ -34,7 +36,11 @@ import {
 } from './helpers';
 
 const UNIFIED = 0x21;
-const LEGACY = 0x01;
+
+const expectUnified = (witnessSig: Uint8Array) => {
+  expect(witnessSig).toHaveLength(65);
+  expect(witnessSig[64]).toBe(UNIFIED);
+};
 
 describe('B5: chain swaps between BTC (SHA-256) and XBT (BLAKE2b)', () => {
   jest.setTimeout(600_000);
@@ -47,16 +53,16 @@ describe('B5: chain swaps between BTC (SHA-256) and XBT (BLAKE2b)', () => {
 
     await waitFor(swap.id, 'transaction.server.mempool', SHA);
     const lock = await serverLockup(swap);
-    console.log(`server XBT lockup: ${lock.id}`);
-    // The backend's Knots wallet opted in on every input
-    expect(hashTypes(parseTx(lock.hex)).every((t) => t === UNIFIED)).toBe(true);
+    console.log(
+      `server XBT lockup ${lock.id}: ${describeSigs(parseTx(lock.hex))}`,
+    );
     expect((await accept(SHA, lock.hex)).allowed).toBe(false);
 
     await mine(BLAKE);
     await waitFor(swap.id, 'transaction.server.confirmed', BLAKE);
 
     const claim = await userClaim(swap);
-    expect(claim.getInput(0).finalScriptWitness![0]).toHaveLength(65);
+    expectUnified(claim.getInput(0).finalScriptWitness![0]);
     console.log(
       `user XBT claim: ${await rpc(BLAKE, 'sendrawtransaction', [claim.hex], '')}`,
     );
@@ -68,23 +74,23 @@ describe('B5: chain swaps between BTC (SHA-256) and XBT (BLAKE2b)', () => {
   test('XBT -> BTC completes, and the backend claims the XBT with 0x21', async () => {
     const swap = await createSwap('XBT', 'BTC');
     const userLock = await lockUser(swap);
-    // The user's Knots wallet opted in as well
     const userLockHex = await rpc<string>(
       BLAKE,
       'getrawtransaction',
       [userLock],
       '',
     );
-    expect(hashTypes(parseTx(userLockHex)).every((t) => t === UNIFIED)).toBe(
-      true,
+    console.log(
+      `user XBT lockup ${userLock}: ${describeSigs(parseTx(userLockHex))}`,
     );
+    expect((await accept(SHA, userLockHex)).allowed).toBe(false);
 
     await waitFor(swap.id, 'transaction.server.mempool', BLAKE);
     const lock = await serverLockup(swap);
-    console.log(`server BTC lockup: ${lock.id}`);
-    // BTC side: ordinary signatures, but funded from post-fork coins, so the
-    // lockup cannot exist on the BLAKE2b chain
-    expect(hashTypes(parseTx(lock.hex)).every((t) => t === LEGACY)).toBe(true);
+    console.log(
+      `server BTC lockup ${lock.id}: ${describeSigs(parseTx(lock.hex))}`,
+    );
+    // Funded from post-fork coins, so it cannot exist on the BLAKE2b chain
     const lockOnBlake = await accept(BLAKE, lock.hex);
     expect(lockOnBlake.allowed).toBe(false);
     expect(lockOnBlake['reject-reason']).toMatch(/missing-inputs/);
@@ -100,10 +106,10 @@ describe('B5: chain swaps between BTC (SHA-256) and XBT (BLAKE2b)', () => {
 
     await waitFor(swap.id, 'transaction.claimed', BLAKE);
     const serverClaim = parseTx(await findSpend(BLAKE, userLock));
-    console.log(`server XBT claim: ${serverClaim.id}`);
-    const sig = serverClaim.getInput(0).finalScriptWitness![0];
-    expect(sig).toHaveLength(65);
-    expect(sig[64]).toBe(UNIFIED);
+    console.log(
+      `server XBT claim ${serverClaim.id}: ${describeSigs(serverClaim)}`,
+    );
+    expectUnified(serverClaim.getInput(0).finalScriptWitness![0]);
   });
 
   test('user refunds an underpaid XBT lockup after the timeout, signed 0x21', async () => {
@@ -115,9 +121,7 @@ describe('B5: chain swaps between BTC (SHA-256) and XBT (BLAKE2b)', () => {
 
     await mineTo(BLAKE, swap.lockupDetails.timeoutBlockHeight);
     const refund = await userRefund(swap, userLock);
-    const sig = refund.getInput(0).finalScriptWitness![0];
-    expect(sig).toHaveLength(65);
-    expect(sig[64]).toBe(UNIFIED);
+    expectUnified(refund.getInput(0).finalScriptWitness![0]);
     expect(await accept(BLAKE, refund.hex)).toMatchObject({ allowed: true });
     console.log(
       `user XBT refund: ${await rpc(BLAKE, 'sendrawtransaction', [refund.hex], '')}`,
@@ -133,20 +137,35 @@ describe('B5: chain swaps between BTC (SHA-256) and XBT (BLAKE2b)', () => {
     await mine(BLAKE);
     await waitFor(swap.id, 'transaction.server.confirmed', BLAKE);
 
-    // Run the XBT side past the backend's timeout without claiming
     await mineTo(BLAKE, swap.claimDetails.timeoutBlockHeight + 1);
     await waitFor(swap.id, 'transaction.refunded', BLAKE, ['swap.expired']);
 
     const serverRefund = parseTx(await findSpend(BLAKE, lock.id));
-    console.log(`server XBT refund: ${serverRefund.id}`);
-    expect(hashTypes(serverRefund).every((t) => t === UNIFIED)).toBe(true);
+    console.log(
+      `server XBT refund ${serverRefund.id}: ${describeSigs(serverRefund)}`,
+    );
+    expectUnified(serverRefund.getInput(0).finalScriptWitness![0]);
 
-    // The user still gets their BTC back after their own (longer) timeout
     await mineTo(port('BTC'), swap.lockupDetails.timeoutBlockHeight);
     const refund = await userRefund(swap, userLock);
     console.log(
       `user BTC refund: ${await rpc(SHA, 'sendrawtransaction', [refund.hex], '')}`,
     );
     await mine(SHA);
+  });
+
+  test('D18: backend refuses a BTC lockup that is replayable onto BLAKE2b', async () => {
+    const swap = await createSwap('BTC', 'XBT');
+    const { raw } = await lockUserWithPreForkCoin(swap);
+    // Precondition: this lockup really is valid on the BLAKE2b chain
+    expect((await accept(BLAKE, raw)).allowed).toBe(true);
+
+    await waitFor(swap.id, 'transaction.lockupFailed', SHA, [
+      'transaction.lockupFailed',
+    ]);
+    const info = await api<{ failureReason?: string }>(`/swap/${swap.id}`);
+    console.log(`D18 refusal: ${info.failureReason}`);
+    expect(info.failureReason).toContain('REPLAY_FLAGGED');
+    await expect(serverLockup(swap)).rejects.toThrow();
   });
 });

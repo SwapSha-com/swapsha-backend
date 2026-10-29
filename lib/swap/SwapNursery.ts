@@ -35,6 +35,7 @@ import {
   getRate,
   splitPairId,
 } from '../Utils';
+import { checkLockupReplay, isReplayPair } from '../blake2b/ReplayGuard';
 import type ArkClient from '../chain/ArkClient';
 import type { IChainClient } from '../chain/ChainClient';
 import { LegacyReverseSwapOutputType, etherDecimals } from '../consts/Consts';
@@ -1232,6 +1233,35 @@ class SwapNursery extends TypedEventEmitter<SwapNurseryEvents> {
   ) => {
     const sendingCurrency = this.currencies.get(swap.sendingData.symbol)!;
     const wallet = this.walletManager.wallets.get(swap.sendingData.symbol)!;
+
+    // SwapSha D18: never lock against a user lockup that can be replayed
+    const receivingSymbol = swap.receivingData?.symbol;
+    const receivingClient =
+      receivingSymbol !== undefined
+        ? this.currencies.get(receivingSymbol)?.chainClient
+        : undefined;
+    const lockupId = swap.receivingData?.transactionId;
+    if (
+      receivingSymbol !== undefined &&
+      isReplayPair(receivingSymbol, swap.sendingData.symbol) &&
+      receivingClient !== undefined &&
+      sendingCurrency.chainClient !== undefined &&
+      lockupId !== undefined &&
+      lockupId !== null
+    ) {
+      const replay = await checkLockupReplay(
+        lockupId,
+        await receivingClient.getRawTransaction(lockupId),
+        sendingCurrency.chainClient,
+      );
+      if (replay !== undefined) {
+        this.logger.error(
+          `Refusing to lock for Chain Swap ${swap.id}: ${replay}`,
+        );
+        await this.lockupFailed(swap, `REPLAY_FLAGGED: ${replay}`);
+        return;
+      }
+    }
 
     switch (sendingCurrency.type) {
       case CurrencyType.BitcoinLike:

@@ -91,3 +91,12 @@ export const verifyChainIdentity = async (
 
   return `${symbol}: BLAKE2b chain, fork block ${deployment.height} ${forkHash}`;
 };
+
+/** Height of the BLAKE2b fork as the node reports it, if it has one. */
+export const blake2bForkHeight = async (
+  client: ChainClient,
+): Promise<number | undefined> => {
+  const info = await client.rpc<DeploymentInfo>('getdeploymentinfo');
+  const deployment = info.blake2b ?? info.deployments?.blake2b;
+  return deployment?.active === true ? deployment.height : undefined;
+};
