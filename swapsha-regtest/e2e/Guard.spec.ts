@@ -117,6 +117,24 @@ const sendPreForkCoin = async (
   return { txid, raw };
 };
 
+/**
+ * testmempoolaccept on `nodePort`, after mining that chain past the
+ * transaction's nLockTime. The Knots wallet sets nLockTime to its own tip
+ * (anti fee sniping), and the two chains run at different heights, so
+ * without this the other chain can answer non-final before it looks at the
+ * inputs or the signature.
+ */
+const acceptWhenFinal = async (nodePort: number, raw: string) => {
+  const { locktime } = await rpc<{ locktime: number }>(
+    nodePort,
+    'decoderawtransaction',
+    [raw],
+    '',
+  );
+  if (locktime < 500_000_000) await mineTo(nodePort, locktime + 1);
+  return accept(nodePort, raw);
+};
+
 /** Empty `wallet` on `nodePort` into the "user" wallet, so reruns start clean. */
 const drain = async (nodePort: number, wallet: string) => {
   const balance = await rpc<number>(nodePort, 'getbalance', [], wallet);
@@ -173,7 +191,7 @@ run('D26: provider wallet guard, live', () => {
     const deposit = await sendPreForkCoin(SHA, to, 1, BLAKE);
 
     // The risk is real: the same deposit is valid on the BLAKE2b chain
-    expect((await accept(BLAKE, deposit.raw)).allowed).toBe(true);
+    expect((await acceptWhenFinal(BLAKE, deposit.raw)).allowed).toBe(true);
 
     await expectRefused(
       configWithWallet('BTC', 'guard-tainted'),
@@ -202,11 +220,8 @@ run('D26: provider wallet guard, live', () => {
     );
     const deposit = await sendPreForkCoin(BLAKE, to, 1, SHA);
 
-    // Opted in, so it is invalid on SHA-256 even though its input exists
-    // there. The wallet sets nLockTime to the XBT tip, so bring SHA-256 past
-    // it first; otherwise SHA-256 says non-final before checking the script.
-    await mineTo(SHA, (await height(BLAKE)) + 1);
-    const onSha = await accept(SHA, deposit.raw);
+    // Opted in, so it is invalid on SHA-256 even though its input exists there
+    const onSha = await acceptWhenFinal(SHA, deposit.raw);
     console.log(`opt-in deposit on SHA-256: ${JSON.stringify(onSha)}`);
     expect(onSha.allowed).toBe(false);
     expect(onSha['reject-reason']).toMatch(/script-verify|signature|sig/i);
@@ -231,7 +246,7 @@ run('D26: provider wallet guard, live', () => {
       1,
       BLAKE,
     );
-    expect((await accept(BLAKE, deposit.raw)).allowed).toBe(true);
+    expect((await acceptWhenFinal(BLAKE, deposit.raw)).allowed).toBe(true);
 
     await start();
     const swap = await createSwap('BTC', 'XBT');
@@ -243,7 +258,7 @@ run('D26: provider wallet guard, live', () => {
     );
     const lockHex = await rpc<string>(SHA, 'getrawtransaction', [lockId], '');
     // What the first D18 check saw: inputs missing on XBT, so "safe"
-    const onXbt = await accept(BLAKE, lockHex);
+    const onXbt = await acceptWhenFinal(BLAKE, lockHex);
     console.log(`lockup ${lockId} on XBT: ${JSON.stringify(onXbt)}`);
     expect(onXbt['reject-reason']).toMatch(/missing-inputs/);
     await mine(SHA);
