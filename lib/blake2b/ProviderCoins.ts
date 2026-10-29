@@ -139,12 +139,14 @@ export const classifyCoin = async (
       }
     }
     if (result.verdict === 'shared') {
-      // Name the root cause, not just the last hop
+      // Name the root cause only: nesting every hop grows without bound
       const first = memo.get(tx.vin[0].txid);
       if (first !== undefined) {
         result = {
           verdict: 'shared',
-          reason: `${txid} spends shared coins without SIGHASH_UNIFIED (${first.reason})`,
+          reason: first.reason.startsWith('ancestor ')
+            ? first.reason
+            : `${txid} spends shared coins without SIGHASH_UNIFIED`,
         };
       }
     }

@@ -1259,7 +1259,12 @@ class SwapNursery extends TypedEventEmitter<SwapNurseryEvents> {
         this.logger.error(
           `Refusing to lock for Chain Swap ${swap.id}: ${replay}`,
         );
-        await this.lockupFailed(swap, `REPLAY_FLAGGED: ${replay}`);
+        // failureReason is VARCHAR(255); the full reason is in the log above
+        const stored = `REPLAY_FLAGGED: ${replay}`;
+        await this.lockupFailed(
+          swap,
+          stored.length <= 255 ? stored : `${stored.slice(0, 252)}...`,
+        );
         return;
       }
     }
