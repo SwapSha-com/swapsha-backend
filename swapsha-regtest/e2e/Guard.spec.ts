@@ -32,13 +32,12 @@ import {
 import {
   BLAKE,
   SHA,
-  accept,
+  acceptWhenFinal,
   api,
   createSwap,
   ensureUserWallets,
   height,
   mine,
-  mineTo,
   rpc,
   waitFor,
 } from './helpers';
@@ -115,24 +114,6 @@ const sendPreForkCoin = async (
     `sent ${amount} from pre-fork coin ${coin.txid}:${coin.vout} on ${nodePort}: ${txid}`,
   );
   return { txid, raw };
-};
-
-/**
- * testmempoolaccept on `nodePort`, after mining that chain past the
- * transaction's nLockTime. The Knots wallet sets nLockTime to its own tip
- * (anti fee sniping), and the two chains run at different heights, so
- * without this the other chain can answer non-final before it looks at the
- * inputs or the signature.
- */
-const acceptWhenFinal = async (nodePort: number, raw: string) => {
-  const { locktime } = await rpc<{ locktime: number }>(
-    nodePort,
-    'decoderawtransaction',
-    [raw],
-    '',
-  );
-  if (locktime < 500_000_000) await mineTo(nodePort, locktime + 1);
-  return accept(nodePort, raw);
 };
 
 /** Empty `wallet` on `nodePort` into the "user" wallet, so reruns start clean. */

@@ -369,11 +369,23 @@ export const lockUserWithPreForkCoin = async (
   const utxos = await rpc<
     { txid: string; vout: number; amount: number; confirmations: number }[]
   >(SHA, 'listunspent', [1], 'prefork');
-  const coin = utxos.find(
-    (u) => tip - u.confirmations + 1 < forkHeight && u.amount > 0.01,
-  );
+  // The coin must still be unspent on BLAKE2b too, or the lockup cannot be
+  // replayable there (other tests spend pre-fork coins on that chain)
+  let coin: (typeof utxos)[number] | undefined;
+  for (const u of utxos) {
+    if (tip - u.confirmations + 1 >= forkHeight || u.amount <= 0.01) continue;
+    if (
+      (await rpc<unknown>(BLAKE, 'gettxout', [u.txid, u.vout, true], '')) !==
+      null
+    ) {
+      coin = u;
+      break;
+    }
+  }
   if (coin === undefined)
-    throw new Error('no pre-fork coin left in the prefork wallet');
+    throw new Error(
+      'no pre-fork coin left in the prefork wallet that is unspent on both chains',
+    );
   const { psbt } = await rpc<{ psbt: string }>(
     SHA,
     'walletcreatefundedpsbt',
@@ -403,4 +415,22 @@ export const lockUserWithPreForkCoin = async (
   );
   await mine(SHA);
   return { txid, raw };
+};
+
+/**
+ * testmempoolaccept on `nodePort`, after mining that chain past the
+ * transaction's nLockTime. The Knots wallet sets nLockTime to its own tip
+ * (anti fee sniping), and the two chains run at different heights, so
+ * without this the other chain can answer non-final before it looks at the
+ * inputs or the signature.
+ */
+export const acceptWhenFinal = async (nodePort: number, raw: string) => {
+  const { locktime } = await rpc<{ locktime: number }>(
+    nodePort,
+    'decoderawtransaction',
+    [raw],
+    '',
+  );
+  if (locktime < 500_000_000) await mineTo(nodePort, locktime + 1);
+  return accept(nodePort, raw);
 };

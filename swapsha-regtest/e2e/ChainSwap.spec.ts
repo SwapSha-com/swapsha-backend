@@ -17,6 +17,7 @@ import {
   BLAKE,
   SHA,
   accept,
+  acceptWhenFinal,
   api,
   createSwap,
   describeSigs,
@@ -158,7 +159,7 @@ describe('B5: chain swaps between BTC (SHA-256) and XBT (BLAKE2b)', () => {
     const swap = await createSwap('BTC', 'XBT');
     const { raw } = await lockUserWithPreForkCoin(swap);
     // Precondition: this lockup really is valid on the BLAKE2b chain
-    expect((await accept(BLAKE, raw)).allowed).toBe(true);
+    expect((await acceptWhenFinal(BLAKE, raw)).allowed).toBe(true);
 
     await waitFor(swap.id, 'transaction.lockupFailed', SHA, [
       'transaction.lockupFailed',
