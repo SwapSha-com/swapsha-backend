@@ -51,11 +51,13 @@ const chain = (
             })),
       };
     }),
-    rpc: jest.fn(async (method: string, params: unknown[]) =>
-      method === 'gettxout' && elsewhere.includes(params[0] as string)
-        ? { value: 1 }
-        : null,
-    ),
+    // Like RpcClient: a null result is rejected, not returned
+    rpc: jest.fn(async (method: string, params: unknown[]) => {
+      if (method === 'gettxout' && elsewhere.includes(params[0] as string)) {
+        return { value: 1 };
+      }
+      throw 'no result in RPC response';
+    }),
   }) as unknown as IChainClient;
 
 const other = (elsewhere: string[] = []) => chain('XBT', {}, [], elsewhere);
@@ -214,5 +216,16 @@ describe('verifyProviderCoins', () => {
         isBlake2b: false,
       }),
     ).resolves.toContain('0 confirmed');
+  });
+
+  test('fails closed on any other gettxout error', async () => {
+    const btc = chain('BTC', { cb: { height: 250, coinbase: true } }, ['cb']);
+    const broken = other();
+    (broken as unknown as { rpc: jest.Mock }).rpc.mockRejectedValue(
+      new Error('connection refused'),
+    );
+    await expect(
+      verifyProviderCoins(btc, broken, FORK, { isBlake2b: false }),
+    ).rejects.toThrow('connection refused');
   });
 });

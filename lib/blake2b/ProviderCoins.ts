@@ -154,6 +154,26 @@ export const classifyCoin = async (
   return result;
 };
 
+// RpcClient rejects a null result with this string; gettxout answers null
+// for "no such unspent output", which is the answer we hope for.
+const NO_RESULT = 'no result in RPC response';
+
+const gettxout = async (
+  rpc: NonNullable<Partial<ChainClient>['rpc']>,
+  other: IChainClient,
+  txid: string,
+  vout: number,
+): Promise<unknown> => {
+  try {
+    return await rpc.call(other, 'gettxout', [txid, vout, true]);
+  } catch (error) {
+    if (error === NO_RESULT || (error as Error)?.message === NO_RESULT) {
+      return null;
+    }
+    throw error;
+  }
+};
+
 /**
  * Refuse to start when any confirmed coin in `client`'s wallet could also
  * exist on `other`'s chain. Unconfirmed outputs are skipped: they can only
@@ -180,11 +200,7 @@ export const verifyProviderCoins = async (
     const outpoint = `${utxo.txid}:${utxo.vout}`;
 
     if (rpc !== undefined) {
-      const there = await rpc.call(other, 'gettxout', [
-        utxo.txid,
-        utxo.vout,
-        true,
-      ]);
+      const there = await gettxout(rpc, other, utxo.txid, utxo.vout);
       if (there !== null && there !== undefined) {
         throw new ChainIdentityError(
           `${client.symbol} wallet coin ${outpoint} (${utxo.amount}) also exists on the ${other.symbol} chain. Move it out or fund a fresh wallet with coins unique to this chain.`,

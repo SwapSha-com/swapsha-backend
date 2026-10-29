@@ -135,6 +135,22 @@ describe('ReplayGuard (D18)', () => {
       ).resolves.toBeUndefined();
     });
 
+    test('a non-final rejection is not proof of safety either', async () => {
+      setReplayForkHeight(200);
+      const chain = own({
+        old: { height: 150, coinbase: true },
+        lockup: { height: 280, parents: ['old'] },
+      });
+      await expect(
+        checkLockupReplay(
+          'lockup',
+          'hex',
+          other({ allowed: false, reason: 'non-final' }),
+          chain,
+        ),
+      ).resolves.toContain('once its ancestry is replayed');
+    });
+
     test('fails closed when the fork height is unknown', async () => {
       await expect(
         checkLockupReplay('lockup', 'hex', missing(), own({})),

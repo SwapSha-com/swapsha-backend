@@ -38,6 +38,7 @@ import {
   ensureUserWallets,
   height,
   mine,
+  mineTo,
   rpc,
   waitFor,
 } from './helpers';
@@ -201,11 +202,14 @@ run('D26: provider wallet guard, live', () => {
     );
     const deposit = await sendPreForkCoin(BLAKE, to, 1, SHA);
 
-    // Opted in, so it is invalid on SHA-256 even though its input exists there
+    // Opted in, so it is invalid on SHA-256 even though its input exists
+    // there. The wallet sets nLockTime to the XBT tip, so bring SHA-256 past
+    // it first; otherwise SHA-256 says non-final before checking the script.
+    await mineTo(SHA, (await height(BLAKE)) + 1);
     const onSha = await accept(SHA, deposit.raw);
     console.log(`opt-in deposit on SHA-256: ${JSON.stringify(onSha)}`);
     expect(onSha.allowed).toBe(false);
-    expect(onSha['reject-reason']).not.toMatch(/missing-inputs/);
+    expect(onSha['reject-reason']).toMatch(/script-verify|signature|sig/i);
 
     const log = await start(configWithWallet('XBT', 'guard-optin'));
     const line = log

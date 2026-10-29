@@ -15,14 +15,14 @@ import { isBlake2bCurrency } from './SighashMode';
  * - would it accept the transaction now? (replayable)
  *
  * Either answer refuses the swap; the user refunds their lockup after the
- * timeout. An invalid signature there means the transaction can only ever
- * exist on its own chain.
+ * timeout.
  *
- * Missing inputs is not enough on its own: the inputs may come from a
- * transaction that is itself replayable but has not been replayed yet. So on
- * missing inputs the backend walks the lockup's ancestry on its own chain
- * (classifyCoin, the same walk as the D26 wallet guard) and refuses unless
- * the lockup provably exists on its own chain only.
+ * A rejection there is not proof of safety. Missing inputs may only mean a
+ * replayable parent has not been replayed yet, and non-final only means the
+ * other chain has not reached the lockup's nLockTime yet. So on any rejection
+ * the backend walks the lockup's ancestry on its own chain (classifyCoin, the
+ * same walk as the D26 wallet guard) and refuses unless the lockup provably
+ * exists on its own chain only.
  */
 
 let forkHeight: number | undefined;
