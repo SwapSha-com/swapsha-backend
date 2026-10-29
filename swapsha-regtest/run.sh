@@ -65,7 +65,10 @@ case "${1:-run}" in
     start_db
     npm run compile:typescript
     mkdir -p "$DATA"
-    exec node bin/boltzd --datadir "$DATA" --configpath "$HERE/boltz.conf"
+    # The sidecar finds its seed and certificates next to the config file, so
+    # the config has to live inside the backend data dir.
+    cp "$HERE/boltz.conf" "$DATA/boltz.conf"
+    exec node bin/boltzd --datadir "$DATA" --configpath "$DATA/boltz.conf"
     ;;
   *) sed -n '2,10p' "$0" ;;
 esac
