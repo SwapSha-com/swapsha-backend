@@ -2,7 +2,7 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { hex } from '@scure/base';
-import { Address, OutScript, Transaction } from '@scure/btc-signer';
+import { Address, OutScript, Script, Transaction } from '@scure/btc-signer';
 import {
   type ClaimDetails,
   Musig,
@@ -325,13 +325,31 @@ export const accept = async (nodePort: number, txHex: string) =>
     )
   )[0];
 
-/** Witness signature length and hash-type byte per input, for logging. */
+/**
+ * First signature of every input, wherever it sits: the witness for segwit
+ * inputs, the first scriptSig push for legacy ones (Knots 29.4.1 hands out
+ * P2PKH change on XBT, and those inputs carry no witness at all).
+ */
+const firstSig = (tx: Transaction, i: number) => {
+  const input = tx.getInput(i);
+  const w = (input.finalScriptWitness ?? [])[0];
+  if (w !== undefined && w.length > 0) return { sig: w, where: 'witness' };
+  if (input.finalScriptSig !== undefined && input.finalScriptSig.length > 0) {
+    const push = Script.decode(input.finalScriptSig)[0];
+    if (push instanceof Uint8Array) return { sig: push, where: 'scriptSig' };
+  }
+  return undefined;
+};
+
+/** Signature length, hash-type byte and location per input, for logging. */
 export const describeSigs = (tx: Transaction) =>
   Array.from({ length: tx.inputsLength }, (_, i) => {
-    const sig = (tx.getInput(i).finalScriptWitness ?? [])[0];
-    if (sig === undefined) return 'no-witness';
-    if (sig.length === 64) return '64B schnorr (SIGHASH_DEFAULT, no opt-in)';
-    return `${sig.length}B 0x${sig[sig.length - 1].toString(16).padStart(2, '0')}`;
+    const found = firstSig(tx, i);
+    if (found === undefined) return 'unsigned';
+    const { sig, where } = found;
+    if (sig.length === 64)
+      return `${where} 64B schnorr (SIGHASH_DEFAULT, no opt-in)`;
+    return `${where} ${sig.length}B 0x${sig[sig.length - 1].toString(16).padStart(2, '0')}`;
   }).join(', ');
 
 /**
