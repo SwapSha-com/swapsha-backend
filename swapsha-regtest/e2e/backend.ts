@@ -97,9 +97,7 @@ export const stop = async () => {
   if (child?.pid === undefined) return;
   const pid = child.pid;
   await new Promise<void>((resolve) => {
-    child!.once('exit', () => resolve());
-    process.kill(-pid, 'SIGINT');
-    setTimeout(() => {
+    const force = setTimeout(() => {
       try {
         process.kill(-pid, 'SIGKILL');
       } catch {
@@ -107,6 +105,11 @@ export const stop = async () => {
       }
       resolve();
     }, 15_000);
+    child!.once('exit', () => {
+      clearTimeout(force);
+      resolve();
+    });
+    process.kill(-pid, 'SIGINT');
   });
   child = undefined;
 };
