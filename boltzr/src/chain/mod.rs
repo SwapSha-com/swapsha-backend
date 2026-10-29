@@ -80,6 +80,13 @@ pub struct Config {
     pub fee_floor: Option<f64>,
 }
 
+impl Config {
+    /// Whether a mempool.space style fee source is configured.
+    pub fn uses_mempool_space(&self) -> bool {
+        self.mempool_space.is_some() || self.mempool.as_ref().is_some_and(|m| m.urls.is_some())
+    }
+}
+
 #[derive(Deserialize, Serialize, PartialEq, Debug, Clone)]
 pub struct LiquidConfig {
     #[serde(flatten)]
@@ -101,6 +108,12 @@ pub trait BaseClient {
 pub trait Client: BaseClient {
     fn chain_type(&self) -> Type;
     fn network(&self) -> Network;
+
+    /// SwapSha: `Unified` for the BLAKE2b chain, so every transaction signed
+    /// for this chain carries SIGHASH_UNIFIED and cannot be replayed.
+    fn sighash_mode(&self) -> boltz_core::bitcoin::blake2b::SighashMode {
+        boltz_core::bitcoin::blake2b::SighashMode::Legacy
+    }
 
     /// Returns the end height of the rescan
     async fn rescan(

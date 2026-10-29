@@ -44,6 +44,7 @@ pub struct ChainClient {
     mempool_space: Option<MempoolSpace>,
     tx_sender: Sender<(Transactions, bool)>,
     block_sender: Sender<(u64, Block)>,
+    sighash_mode: boltz_core::bitcoin::blake2b::SighashMode,
 }
 
 impl PartialEq for ChainClient {
@@ -62,6 +63,12 @@ impl ChainClient {
     const DEFAULT_MEMPOOL_MAX_FEE_DELTA: f64 = 25.0;
     const DEFAULT_MEMPOOL_MAX_AGE_SECS: u64 = 300;
     const DEFAULT_MEMPOOL_MAX_BLOCK_LAG: u64 = 2;
+
+    /// SwapSha: sign transactions for this chain with `mode`.
+    pub fn with_sighash_mode(mut self, mode: boltz_core::bitcoin::blake2b::SighashMode) -> Self {
+        self.sighash_mode = mode;
+        self
+    }
 
     pub fn new(
         cancellation_token: CancellationToken,
@@ -122,6 +129,7 @@ impl ChainClient {
             zmq_client: ZmqClient::new(client_type, network, config),
             tx_sender: channel(ZMQ_TX_CHANNEL_SIZE).0,
             block_sender: channel(ZMQ_BLOCK_CHANNEL_SIZE).0,
+            sighash_mode: boltz_core::bitcoin::blake2b::SighashMode::Legacy,
         };
 
         {
@@ -341,6 +349,10 @@ impl BaseClient for ChainClient {
 impl Client for ChainClient {
     fn chain_type(&self) -> Type {
         self.client_type
+    }
+
+    fn sighash_mode(&self) -> boltz_core::bitcoin::blake2b::SighashMode {
+        self.sighash_mode
     }
 
     fn network(&self) -> Network {

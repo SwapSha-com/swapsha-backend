@@ -12,6 +12,7 @@ pub fn refund_utxo(
     destination_address: &str,
     fee_per_vbyte: f64,
     blinding_key: Option<[u8; 32]>,
+    sighash_mode: boltz_core::bitcoin::blake2b::SighashMode,
 ) -> Result<Transaction> {
     construct_transaction(
         network,
@@ -22,5 +23,6 @@ pub fn refund_utxo(
         destination_address,
         fee_per_vbyte,
         blinding_key,
+        sighash_mode,
     )
 }

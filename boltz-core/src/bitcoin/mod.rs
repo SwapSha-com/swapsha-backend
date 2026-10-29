@@ -13,11 +13,12 @@ use bitcoin::{
     transaction::{Transaction, TxIn},
 };
 
+pub mod blake2b;
 mod scripts;
 mod tx;
 
 pub use scripts::{Tapleaf, Tree, TreeError, reverse_script, reverse_tree, swap_script, swap_tree};
-pub use tx::{TxError, construct_tx};
+pub use tx::{TxError, construct_tx, construct_tx_with_mode};
 
 /// Information needed to spend a Taproot swap input via the script-path
 /// (uncooperative) leg, when the cooperative MuSig2 key-path is unavailable.

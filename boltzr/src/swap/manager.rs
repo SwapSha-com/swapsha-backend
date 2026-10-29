@@ -317,6 +317,7 @@ impl SwapManager for Manager {
                         inputs,
                         destination: &boltz_core::Destination::Single(&address.try_into()?),
                         fee: fee.into(),
+                        sighash_mode: client.sighash_mode(),
                     });
 
                 Ok(boltz_core::wrapper::construct_tx(params)?)

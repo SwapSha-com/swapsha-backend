@@ -89,8 +89,32 @@ pub async fn connect_nodes<K: KeysHelper>(
                     chain: chain_config,
                     cln: cln_config,
                     lnds: lnd_configs,
+                    blake2b,
                     ..
                 } = currency;
+
+                let sighash_mode = if blake2b == Some(true) {
+                    // SwapSha Phase 1 (D23): Knots wallet only, no Lightning, and
+                    // never a public SHA-256 mempool service for BLAKE2b data.
+                    if lnd_configs.as_ref().is_some_and(|l| !l.is_empty()) || cln_config.is_some() {
+                        return Err(anyhow!(
+                            "{}: blake2b currencies cannot have lnds or cln",
+                            symbol
+                        ));
+                    }
+                    if chain_config
+                        .as_ref()
+                        .is_some_and(|c| c.uses_mempool_space())
+                    {
+                        return Err(anyhow!(
+                            "{}: blake2b currencies must not use mempool.space (it follows the SHA-256 chain)",
+                            symbol
+                        ));
+                    }
+                    boltz_core::bitcoin::blake2b::SighashMode::Unified
+                } else {
+                    boltz_core::bitcoin::blake2b::SighashMode::Legacy
+                };
 
                 if let Some(preferred_wallet) = preferred_wallet
                     && preferred_wallet != PREFERRED_WALLET_CORE
@@ -106,14 +130,17 @@ pub async fn connect_nodes<K: KeysHelper>(
 
                 let keys_info = keys_helper.get_for_symbol(&symbol)?;
                 let chain = match chain_config {
-                    Some(config) => connect_client(ChainClient::new(
-                        cancellation_token.clone(),
-                        cache.clone(),
-                        crate::chain::types::Type::Bitcoin,
-                        network,
-                        symbol.clone(),
-                        config,
-                    ))
+                    Some(config) => connect_client(
+                        ChainClient::new(
+                            cancellation_token.clone(),
+                            cache.clone(),
+                            crate::chain::types::Type::Bitcoin,
+                            network,
+                            symbol.clone(),
+                            config,
+                        )
+                        .map(|client| client.with_sighash_mode(sighash_mode)),
+                    )
                     .await
                     .map(|chain| Arc::new(chain) as Arc<dyn crate::chain::Client + Send + Sync>),
                     None => None,

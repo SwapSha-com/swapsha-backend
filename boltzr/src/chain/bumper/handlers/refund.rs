@@ -137,6 +137,7 @@ where
             inputs: vec![refund_details.try_into()?],
             fee: fee_target.into(),
             destination: &Destination::Single(&destination.try_into()?),
+            sighash_mode: self.chain_client.sighash_mode(),
         }))?;
 
         self.chain_client

@@ -1,5 +1,12 @@
 use crate::{
-    bitcoin::{InputDetail, scripts::TreeError},
+    bitcoin::{
+        InputDetail,
+        blake2b::{
+            SIGHASH_ALL_UNIFIED, SighashMode, UnifiedScriptType, UnifiedSighashError,
+            unified::{UnifiedOptions, unified_sighash},
+        },
+        scripts::TreeError,
+    },
     consts::{ECDSA_BYTES_TO_GRIND, PREIMAGE_DUMMY, STUB_SCHNORR_SIGNATURE_LENGTH},
     target_fee::{FeeError, FeeTarget, target_fee},
     utils::{Destination, InputType, OutputType},
@@ -58,6 +65,9 @@ pub enum TxError {
     /// A secp256k1 operation (key parse, signature) failed.
     #[error(transparent)]
     Secp(#[from] bitcoin::secp256k1::Error),
+    /// Failed to compute a SIGHASH_UNIFIED digest.
+    #[error(transparent)]
+    Unified(#[from] UnifiedSighashError),
 }
 
 impl From<FeeError> for TxError {
@@ -78,9 +88,23 @@ impl From<FeeError> for TxError {
 #[must_use = "ignoring the result discards the constructed transaction"]
 pub fn construct_tx<C: Signing + Verification>(
     secp: &Secp256k1<C>,
+    inputs: Vec<InputDetail>,
+    destination: &Destination<&Address>,
+    fee: FeeTarget,
+) -> Result<(Transaction, u64), TxError> {
+    construct_tx_with_mode(secp, inputs, destination, fee, SighashMode::Legacy)
+}
+
+/// [`construct_tx`] with an explicit [`SighashMode`]. `Unified` signs every
+/// input with SIGHASH_UNIFIED (0x21) for the BLAKE2b chain, so the result is
+/// invalid on the SHA-256 chain and cannot be replayed there.
+#[must_use = "ignoring the result discards the constructed transaction"]
+pub fn construct_tx_with_mode<C: Signing + Verification>(
+    secp: &Secp256k1<C>,
     mut inputs: Vec<InputDetail>,
     destination: &Destination<&Address>,
     fee: FeeTarget,
+    sighash_mode: SighashMode,
 ) -> Result<(Transaction, u64), TxError> {
     // BIP69: sort inputs by (outpoint.txid asc, outpoint.vout asc).
     inputs.sort_by(|a, b| {
@@ -92,7 +116,13 @@ pub fn construct_tx<C: Signing + Verification>(
     });
 
     target_fee(fee, |fee, _is_fee_estimation| {
-        construct_raw(secp, &inputs, destination, Amount::from_sat(fee))
+        construct_raw(
+            secp,
+            &inputs,
+            destination,
+            Amount::from_sat(fee),
+            sighash_mode,
+        )
     })
 }
 
@@ -108,7 +138,9 @@ fn construct_raw<C: Signing + Verification>(
     inputs: &[InputDetail],
     destination: &Destination<&Address>,
     fee: Amount,
+    sighash_mode: SighashMode,
 ) -> Result<Transaction, TxError> {
+    let unified = sighash_mode == SighashMode::Unified;
     let input_sum = inputs
         .iter()
         .map(|input| input.tx_out.value)
@@ -187,20 +219,40 @@ fn construct_raw<C: Signing + Verification>(
     let prevouts = Prevouts::All(&prevouts);
 
     let mut sighash_cache = SighashCache::new(tx.clone());
+    let unsigned = tx.clone();
+    let spent: Vec<TxOut> = inputs.iter().map(|input| input.tx_out.clone()).collect();
 
     for ((i, input), tx_in) in inputs.iter().enumerate().zip(tx.input.iter_mut()) {
         match &input.output_type {
             OutputType::Legacy(witness_script) => {
-                let sighash = sighash_cache.legacy_signature_hash(
-                    i,
-                    witness_script,
-                    SIGHASH_TYPE_LEGACY.to_u32(),
-                )?;
+                let signature = if unified {
+                    let hash = unified_sighash(
+                        &unsigned,
+                        i,
+                        SIGHASH_ALL_UNIFIED,
+                        &spent,
+                        UnifiedScriptType::Base,
+                        &UnifiedOptions {
+                            script_code: Some(witness_script),
+                            ..Default::default()
+                        },
+                    )?;
+                    PushBytesBuf::try_from(unified_ecdsa_signature(secp, &hash, &input.keys)?)?
+                } else {
+                    let sighash = sighash_cache.legacy_signature_hash(
+                        i,
+                        witness_script,
+                        SIGHASH_TYPE_LEGACY.to_u32(),
+                    )?;
+                    PushBytesBuf::try_from(
+                        legacy_signature(secp, &sighash.as_raw_hash(), &input.keys)?
+                            .serialize()
+                            .to_vec(),
+                    )?
+                };
 
                 let mut script_sig = ScriptBuf::new();
-                script_sig.push_slice(
-                    legacy_signature(secp, &sighash.as_raw_hash(), &input.keys)?.serialize(),
-                );
+                script_sig.push_slice(signature);
 
                 match input.input_type {
                     InputType::Claim(preimage) => {
@@ -230,7 +282,7 @@ fn construct_raw<C: Signing + Verification>(
 
         match &input.output_type {
             OutputType::Taproot(None) => {
-                tx_in.witness = stubbed_cooperative_witness();
+                tx_in.witness = stubbed_cooperative_witness(sighash_mode);
             }
             OutputType::Taproot(Some(uncooperative)) => {
                 let leaf = if let InputType::Claim(_) = input.input_type {
@@ -239,21 +291,44 @@ fn construct_raw<C: Signing + Verification>(
                     &uncooperative.tree.refund_leaf
                 };
 
-                let leaf_hash = leaf.leaf_hash()?;
-
-                let sighash = sighash_cache.taproot_script_spend_signature_hash(
-                    i,
-                    &prevouts,
-                    leaf_hash,
-                    SIGHASH_TYPE_TAPROOT,
-                )?;
-
-                let sig = taproot::Signature {
-                    sighash_type: SIGHASH_TYPE_TAPROOT,
-                    signature: secp.sign_schnorr(
-                        &Message::from_digest_slice(sighash.as_raw_hash().as_byte_array())?,
-                        &input.keys,
-                    ),
+                let signature: Vec<u8> = if unified {
+                    let hash = unified_sighash(
+                        &unsigned,
+                        i,
+                        SIGHASH_ALL_UNIFIED,
+                        &spent,
+                        UnifiedScriptType::Tapscript,
+                        &UnifiedOptions {
+                            leaf_script: Some(&leaf.output),
+                            leaf_version: Some(leaf.version),
+                            ..Default::default()
+                        },
+                    )?;
+                    // SIGHASH_DEFAULT cannot carry the opt-in, so unified
+                    // Schnorr signatures are 65 bytes: signature then 0x21.
+                    let mut sig = secp
+                        .sign_schnorr(&Message::from_digest(hash), &input.keys)
+                        .as_ref()
+                        .to_vec();
+                    sig.push(SIGHASH_ALL_UNIFIED);
+                    sig
+                } else {
+                    let leaf_hash = leaf.leaf_hash()?;
+                    let sighash = sighash_cache.taproot_script_spend_signature_hash(
+                        i,
+                        &prevouts,
+                        leaf_hash,
+                        SIGHASH_TYPE_TAPROOT,
+                    )?;
+                    taproot::Signature {
+                        sighash_type: SIGHASH_TYPE_TAPROOT,
+                        signature: secp.sign_schnorr(
+                            &Message::from_digest_slice(sighash.as_raw_hash().as_byte_array())?,
+                            &input.keys,
+                        ),
+                    }
+                    .serialize()
+                    .to_vec()
                 };
 
                 let control_block = uncooperative
@@ -269,7 +344,7 @@ fn construct_raw<C: Signing + Verification>(
 
                 let mut witness = Witness::new();
 
-                witness.push(sig.serialize());
+                witness.push(signature);
 
                 if let InputType::Claim(preimage) = input.input_type {
                     witness.push(preimage);
@@ -281,16 +356,31 @@ fn construct_raw<C: Signing + Verification>(
                 tx_in.witness = witness;
             }
             OutputType::SegwitV0(witness_script) | OutputType::Compatibility(witness_script) => {
-                let sighash = sighash_cache.p2wsh_signature_hash(
-                    i,
-                    witness_script,
-                    input.tx_out.value,
-                    SIGHASH_TYPE_LEGACY,
-                )?;
-
                 let mut witness = Witness::new();
-                witness
-                    .push(legacy_signature(secp, &sighash.as_raw_hash(), &input.keys)?.serialize());
+                if unified {
+                    let hash = unified_sighash(
+                        &unsigned,
+                        i,
+                        SIGHASH_ALL_UNIFIED,
+                        &spent,
+                        UnifiedScriptType::WitnessV0,
+                        &UnifiedOptions {
+                            script_code: Some(witness_script),
+                            ..Default::default()
+                        },
+                    )?;
+                    witness.push(unified_ecdsa_signature(secp, &hash, &input.keys)?);
+                } else {
+                    let sighash = sighash_cache.p2wsh_signature_hash(
+                        i,
+                        witness_script,
+                        input.tx_out.value,
+                        SIGHASH_TYPE_LEGACY,
+                    )?;
+                    witness.push(
+                        legacy_signature(secp, &sighash.as_raw_hash(), &input.keys)?.serialize(),
+                    );
+                }
 
                 match input.input_type {
                     InputType::Claim(preimage) => {
@@ -312,12 +402,35 @@ fn construct_raw<C: Signing + Verification>(
     Ok(tx)
 }
 
-fn stubbed_cooperative_witness() -> Witness {
+fn stubbed_cooperative_witness(sighash_mode: SighashMode) -> Witness {
     let mut witness = Witness::new();
     // Stub because we don't want to create cooperative signatures here
-    // but still be able to have an accurate size estimation
-    witness.push([0; STUB_SCHNORR_SIGNATURE_LENGTH]);
+    // but still be able to have an accurate size estimation. Unified
+    // signatures carry the hash type byte, so they are one byte longer.
+    let len = match sighash_mode {
+        SighashMode::Legacy => STUB_SCHNORR_SIGNATURE_LENGTH,
+        SighashMode::Unified => STUB_SCHNORR_SIGNATURE_LENGTH + 1,
+    };
+    witness.push(vec![0; len]);
     witness
+}
+
+/// DER ECDSA signature over a SIGHASH_UNIFIED digest, with the 0x21 byte.
+fn unified_ecdsa_signature<C: Signing>(
+    secp: &Secp256k1<C>,
+    hash: &[u8; 32],
+    keys: &Keypair,
+) -> Result<Vec<u8>, TxError> {
+    let mut sig = secp
+        .sign_ecdsa_grind_r(
+            &Message::from_digest(*hash),
+            &keys.secret_key(),
+            ECDSA_BYTES_TO_GRIND,
+        )
+        .serialize_der()
+        .to_vec();
+    sig.push(SIGHASH_ALL_UNIFIED);
+    Ok(sig)
 }
 
 fn legacy_signature<C: Signing>(
@@ -1432,6 +1545,7 @@ mod tests {
             std::slice::from_ref(&input),
             &Destination::Single(&address),
             fee,
+            SighashMode::Legacy,
         );
 
         assert_eq!(result.unwrap_err(), TxError::FeeExceedsInputs);
@@ -1473,6 +1587,7 @@ mod tests {
                 outputs: &outputs,
             }),
             fee,
+            SighashMode::Legacy,
         );
 
         assert_eq!(result.unwrap_err(), TxError::OutputsExceedInputs);

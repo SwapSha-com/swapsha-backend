@@ -14,6 +14,8 @@ pub struct CurrencyConfig {
     pub chain: Option<crate::chain::Config>,
     pub cln: Option<crate::lightning::cln::Config>,
     pub lnds: Option<Vec<crate::lightning::lnd::Config>>,
+    /// SwapSha: Bitcoin on the BLAKE2b chain (XBT). Signs with SIGHASH_UNIFIED.
+    pub blake2b: Option<bool>,
 }
 
 #[derive(Deserialize, Serialize, PartialEq, Clone, Debug)]

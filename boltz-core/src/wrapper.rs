@@ -74,6 +74,8 @@ pub struct BitcoinParams<'a> {
     pub destination: &'a Destination<'a, &'a BitcoinAddress>,
     /// Fee selection.
     pub fee: FeeTarget,
+    /// `Unified` for the BLAKE2b chain (SIGHASH_UNIFIED, replay protected).
+    pub sighash_mode: crate::bitcoin::blake2b::SighashMode,
 }
 
 /// Inputs for the Elements branch of [`construct_tx`].
@@ -134,8 +136,13 @@ pub fn construct_tx(params: Params) -> Result<(Transaction, u64), WrapperError> 
     match params {
         Params::Bitcoin(params) => {
             let secp = bitcoin::secp256k1::Secp256k1::new();
-            let (tx, fee) =
-                crate::bitcoin::construct_tx(&secp, params.inputs, params.destination, params.fee)?;
+            let (tx, fee) = crate::bitcoin::construct_tx_with_mode(
+                &secp,
+                params.inputs,
+                params.destination,
+                params.fee,
+                params.sighash_mode,
+            )?;
             Ok((Transaction::Bitcoin(tx), fee))
         }
         Params::Elements(params) => {

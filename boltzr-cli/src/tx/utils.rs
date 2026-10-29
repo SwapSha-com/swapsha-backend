@@ -68,6 +68,7 @@ pub fn construct_transaction(
     destination_address: &str,
     fee_per_vbyte: f64,
     blinding_key: Option<[u8; 32]>,
+    sighash_mode: boltz_core::bitcoin::blake2b::SighashMode,
 ) -> Result<Transaction> {
     let address = parse_address(destination_address)?;
     let swap_tree_or_redeem_script = swap_tree_or_redeem_script.replace("\\\"", "\"");
@@ -90,6 +91,7 @@ pub fn construct_transaction(
                 }],
                 destination: &boltz_core::Destination::Single(&address.try_into()?),
                 fee: fee_per_vbyte.into(),
+                sighash_mode,
             })
         }
         Transaction::Elements(tx) => {

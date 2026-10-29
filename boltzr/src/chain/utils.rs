@@ -24,6 +24,8 @@ pub enum Transaction {
 #[derive(PartialEq, Debug, Clone)]
 pub enum BlockHeader {
     Bitcoin(bitcoin::block::Header),
+    /// SwapSha: 164-byte v2 header from the BLAKE2b chain.
+    Blake2b(Box<boltz_core::bitcoin::blake2b::BlockHeader>),
     Elements(Box<elements::BlockHeader>),
 }
 
@@ -199,12 +201,17 @@ impl Block {
     pub fn parse(block_type: &Type, block: &[u8]) -> anyhow::Result<Block> {
         match block_type {
             Type::Bitcoin => {
-                let block: bitcoin::Block = bitcoin::consensus::deserialize(block)?;
+                // rust-bitcoin only reads 80-byte headers; boltz-core parses
+                // both v1 and the BLAKE2b chain's 164-byte v2 headers.
+                let (header, txs) = boltz_core::bitcoin::blake2b::parse_block(block)?;
+                let header = if header.is_v2 {
+                    BlockHeader::Blake2b(Box::new(header))
+                } else {
+                    BlockHeader::Bitcoin(bitcoin::consensus::deserialize(&block[..80])?)
+                };
                 Ok(Block {
-                    header: BlockHeader::Bitcoin(block.header),
-                    transactions: Arc::new(
-                        block.txdata.into_iter().map(Transaction::Bitcoin).collect(),
-                    ),
+                    header,
+                    transactions: Arc::new(txs.into_iter().map(Transaction::Bitcoin).collect()),
                 })
             }
             Type::Elements => {
@@ -226,6 +233,7 @@ impl Block {
     pub fn block_hash(&self) -> [u8; 32] {
         let mut hash = match &self.header {
             BlockHeader::Bitcoin(header) => header.block_hash().to_raw_hash().to_byte_array(),
+            BlockHeader::Blake2b(header) => header.block_hash().to_raw_hash().to_byte_array(),
             BlockHeader::Elements(header) => header.block_hash().to_raw_hash().to_byte_array(),
         };
         hash.reverse();
@@ -373,6 +381,28 @@ mod test {
         assert_eq!(
             block.transactions[2].txid_hex(),
             "ca56648ce69b89a1b8a47d339032c2638738a76eb974d982b14537822eb0d83d"
+        );
+    }
+
+    #[test]
+    fn test_parse_block_bitcoin_blake2b_v2_header() {
+        // 164-byte v2 header from Knots block_header_v2.json ("profile_0_time_offset")
+        // followed by one transaction (the Bitcoin genesis coinbase).
+        let block_hex = format!(
+            "{}01{}",
+            "000000a01f1e1d1c1b1a191817161514131211100f0e0d0c0b0a0908070605040302010000112233445566778899aabbccddeeff00102030405060708090a0b0c0d0e0f0a8913577ffff001d0df0ad0b44332211efcdab89ffeeddccbbaa998877665544332211005802000003001c000000000000000000000000000000000040d10c008967452301efcdab8967452301efcdab8967452301efcdab8967452301efcdab",
+            "01000000010000000000000000000000000000000000000000000000000000000000000000ffffffff4d04ffff001d0104455468652054696d65732030332f4a616e2f32303039204368616e63656c6c6f72206f6e206272696e6b206f66207365636f6e64206261696c6f757420666f722062616e6b73ffffffff0100f2052a01000000434104678afdb0fe5548271967f1a67130b7105cd6a828e03909a67962e0ea1f61deb649f6bc3f4cef38c4f35504e51ec112de5c384df7ba0b8d578a4c702b6bf11d5fac00000000"
+        );
+        let block = Block::parse_hex(&Type::Bitcoin, &block_hex).unwrap();
+        assert!(matches!(block.header, super::BlockHeader::Blake2b(_)));
+        assert_eq!(
+            hex::encode(block.block_hash()),
+            "4b495dcf05d70a49785b799b22284fbcd9dd1209237c53c87e4674b15587d704"
+        );
+        assert_eq!(block.transactions.len(), 1);
+        assert_eq!(
+            block.transactions[0].txid_hex(),
+            "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
         );
     }
 

@@ -10,11 +10,12 @@ repository.workspace = true
 [features]
 default = ["musig", "bitcoin", "elements"]
 musig = ["dep:secp256k1"]
-bitcoin = ["dep:bitcoin"]
-elements = ["dep:elements", "dep:bitcoin"]
+bitcoin = ["dep:bitcoin", "dep:blake2"]
+elements = ["dep:elements", "dep:bitcoin", "dep:blake2"]
 
 [dependencies]
 bitcoin = { workspace = true, optional = true }
+blake2 = { version = "0.10.6", optional = true }
 elements = { workspace = true, optional = true }
 hex = { workspace = true }
 thiserror = { workspace = true }

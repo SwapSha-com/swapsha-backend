@@ -306,6 +306,11 @@ enum TxCommands {
         fee_per_vbyte: f64,
         #[arg(short, long, value_parser = parsers::parse_hex_fixed_bytes)]
         blinding_key: Option<alloy::primitives::FixedBytes<32>>,
+        #[arg(
+            long,
+            help = "Sign for the BLAKE2b chain (SIGHASH_UNIFIED, replay protected)"
+        )]
+        blake2b: bool,
     },
     #[command(about = "Refunds a HTLC UTXO")]
     Refund {
@@ -320,6 +325,11 @@ enum TxCommands {
         fee_per_vbyte: f64,
         #[arg(short, long, value_parser = parsers::parse_hex_fixed_bytes)]
         blinding_key: Option<alloy::primitives::FixedBytes<32>>,
+        #[arg(
+            long,
+            help = "Sign for the BLAKE2b chain (SIGHASH_UNIFIED, replay protected)"
+        )]
+        blake2b: bool,
     },
 }
 
@@ -562,6 +572,7 @@ async fn run_command(cli: Cli) -> Result<()> {
                 destination_address,
                 fee_per_vbyte,
                 blinding_key,
+                blake2b,
             } => {
                 let claim_tx = tx::claim_utxo(
                     network.into(),
@@ -572,6 +583,7 @@ async fn run_command(cli: Cli) -> Result<()> {
                     destination_address,
                     *fee_per_vbyte,
                     blinding_key.as_ref().map(|key| key.0),
+                    sighash_mode(*blake2b),
                 )?;
                 print_pretty(&Transaction {
                     transaction: alloy::hex::encode(claim_tx.serialize()),
@@ -586,6 +598,7 @@ async fn run_command(cli: Cli) -> Result<()> {
                 destination_address,
                 fee_per_vbyte,
                 blinding_key,
+                blake2b,
             } => {
                 let refund_tx = tx::refund_utxo(
                     network.into(),
@@ -596,6 +609,7 @@ async fn run_command(cli: Cli) -> Result<()> {
                     destination_address,
                     *fee_per_vbyte,
                     blinding_key.as_ref().map(|key| key.0),
+                    sighash_mode(*blake2b),
                 )?;
                 print_pretty(&Transaction {
                     transaction: alloy::hex::encode(refund_tx.serialize()),
@@ -1338,6 +1352,14 @@ fn print_evm_address_from_mnemonic(mnemonic_file: &Path, derivation_path: &str) 
         .build()?;
     println!("{}", signer.address());
     Ok(())
+}
+
+fn sighash_mode(blake2b: bool) -> boltz_core::bitcoin::blake2b::SighashMode {
+    if blake2b {
+        boltz_core::bitcoin::blake2b::SighashMode::Unified
+    } else {
+        boltz_core::bitcoin::blake2b::SighashMode::Legacy
+    }
 }
 
 #[cfg(test)]
