@@ -1,4 +1,5 @@
 import { BlockHeader } from 'boltz-core';
+import { formatError } from '../Utils';
 import type ChainClient from '../chain/ChainClient';
 
 type DeploymentInfo = {
@@ -24,9 +25,18 @@ export const verifyChainIdentity = async (
   network: string,
 ): Promise<string> => {
   const symbol = client.symbol;
-  const info = await client
-    .rpc<DeploymentInfo>('getdeploymentinfo')
-    .catch(() => ({}) as DeploymentInfo);
+  let info: DeploymentInfo;
+  try {
+    info = await client.rpc<DeploymentInfo>('getdeploymentinfo');
+  } catch (error) {
+    if (expectBlake2b) {
+      throw new ChainIdentityError(
+        `${symbol}: getdeploymentinfo failed: ${formatError(error)}`,
+      );
+    }
+    // Nodes too old for getdeploymentinfo cannot be on the BLAKE2b chain
+    info = {};
+  }
   const deployment = info.deployments?.blake2b;
   const active = deployment?.active === true;
   const isMainnet = network.toLowerCase() === 'mainnet';
@@ -48,7 +58,7 @@ export const verifyChainIdentity = async (
 
   if (!active || deployment?.height === undefined) {
     throw new ChainIdentityError(
-      `${symbol} is configured with blake2b = true but its node has no active BLAKE2b deployment. Is it a Knots 29.4.1+ node on the BLAKE2b chain?`,
+      `${symbol} is configured with blake2b = true but its node has no active BLAKE2b deployment. Is it a Knots 29.4.1+ node on the BLAKE2b chain? Deployments reported: ${JSON.stringify(info.deployments ?? info)}`,
     );
   }
 
