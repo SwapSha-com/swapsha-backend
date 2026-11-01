@@ -165,10 +165,14 @@ export const ensureUserWallets = async () => {
       } catch {
         // already loaded, or created by swapsha_testnet4.sh wallets
       }
-      const balance = await rpc<number>(p, 'getbalance');
+      // Confirmed and not locked (listunspent leaves locked coins out):
+      // what the swaps can actually spend
+      const balance = (
+        await rpc<{ amount: number }[]>(p, 'listunspent', [1])
+      ).reduce((sum, u) => sum + u.amount, 0);
       if (balance < 0.005) {
         missing.push(
-          `${chainName(p)} user wallet has ${balance}, needs 0.005: send testnet4 coins to ${await rpc<string>(p, 'getnewaddress', ['', 'bech32'])}`,
+          `${chainName(p)} user wallet has ${balance.toFixed(8)} spendable, needs 0.005: send testnet4 coins to ${await rpc<string>(p, 'getnewaddress', ['', 'bech32'])}`,
         );
       }
     }

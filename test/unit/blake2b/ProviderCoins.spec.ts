@@ -215,7 +215,7 @@ describe('verifyProviderCoins', () => {
       verifyProviderCoins(chain('BTC', {}, []), other(), FORK, {
         isBlake2b: false,
       }),
-    ).resolves.toContain('0 confirmed');
+    ).resolves.toContain('0 coin(s)');
   });
 
   test('fails closed on any other gettxout error', async () => {
@@ -227,5 +227,23 @@ describe('verifyProviderCoins', () => {
     await expect(
       verifyProviderCoins(btc, broken, FORK, { isBlake2b: false }),
     ).rejects.toThrow('connection refused');
+  });
+
+  test('checks unconfirmed deposits too, so they cannot slip past startup', async () => {
+    const btc = chain(
+      'BTC',
+      {
+        old: { height: 150, coinbase: true },
+        // In the mempool: no height yet
+        deposit: { parents: ['old'], witness0: DER_ALL },
+      },
+      ['deposit'],
+    );
+    await expect(
+      verifyProviderCoins(btc, other(), FORK, { isBlake2b: false }),
+    ).rejects.toThrow(/before the fork/);
+    expect(
+      (btc as unknown as { listUnspent: jest.Mock }).listUnspent,
+    ).toHaveBeenCalledWith(0);
   });
 });

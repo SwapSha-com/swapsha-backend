@@ -178,8 +178,10 @@ const gettxout = async (
 
 /**
  * Refuse to start when any confirmed coin in `client`'s wallet could also
- * exist on `other`'s chain. Unconfirmed outputs are skipped: they can only
- * spend coins the wallet already holds, and those are checked.
+ * exist on `other`'s chain. Unconfirmed coins are checked too: an incoming
+ * deposit is unconfirmed at first, and skipping it would let the guard pass
+ * an empty-looking wallet whose coins then confirm unchecked. The walk
+ * handles them (no height yet, so it goes straight to the inputs).
  */
 export const verifyProviderCoins = async (
   client: IChainClient,
@@ -188,7 +190,7 @@ export const verifyProviderCoins = async (
   options: Options,
 ): Promise<string> => {
   const [utxos, info] = await Promise.all([
-    client.listUnspent(1),
+    client.listUnspent(0),
     client.getBlockchainInfo(),
   ]);
   const tip = info.blocks;
@@ -226,5 +228,5 @@ export const verifyProviderCoins = async (
     }
   }
 
-  return `${client.symbol} wallet: ${utxos.length} confirmed coin(s), all unique to this chain (fork at ${forkHeight}, ${visits.count} transaction(s) checked)`;
+  return `${client.symbol} wallet: ${utxos.length} coin(s), all unique to this chain (fork at ${forkHeight}, ${visits.count} transaction(s) checked)`;
 };
