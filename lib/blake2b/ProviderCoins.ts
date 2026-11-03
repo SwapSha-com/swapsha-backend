@@ -20,6 +20,9 @@ import { ChainIdentityError } from './ChainIdentity';
  *   - on the BLAKE2b chain, any input
  *     signed with SIGHASH_UNIFIED        -> unique (invalid on SHA-256)
  *   - any input unique                   -> unique (missing on the other chain)
+ *   - an input the other chain already
+ *     spent in a different transaction  -> unique (a conflicting spend: the
+ *                                            other chain can never accept it)
  *   - otherwise                          -> shared (replayable)
  *
  * Before the walk, each coin is looked up on the other chain directly: if it is
@@ -37,6 +40,13 @@ type Options = {
   /** True when `client` is the BLAKE2b chain, where opted-in signatures count */
   isBlake2b: boolean;
   maxVisits?: number;
+  /**
+   * The other chain's client. When given, a post-fork transaction whose input
+   * the other chain has already spent in a different, confirmed transaction
+   * counts as unique: it conflicts with that chain's history, so it can never
+   * be valid there. This is how a coin from before the fork is split.
+   */
+  other?: IChainClient;
 };
 
 const SIGHASH_UNIFIED = 0x20;
@@ -69,6 +79,76 @@ export const optsIn = (tx: RawTransaction): boolean =>
 const isCoinbase = (tx: RawTransaction) =>
   tx.vin.length === 1 &&
   (tx.vin[0] as unknown as { coinbase?: string }).coinbase !== undefined;
+
+// RpcClient rejects a null result with this string; gettxout answers null
+// for "no such unspent output".
+const NO_RESULT_RPC = 'no result in RPC response';
+const NOT_FOUND = /No such mempool or blockchain transaction/i;
+
+const errorText = (error: unknown) =>
+  typeof error === 'string' ? error : ((error as Error)?.message ?? `${error}`);
+
+/** The other chain's confirmed transaction, or undefined when it has none. */
+const fetchOnOther = async (
+  other: IChainClient,
+  txid: string,
+): Promise<RawTransaction | undefined> => {
+  try {
+    return await other.getRawTransactionVerbose(txid);
+  } catch (error) {
+    if (NOT_FOUND.test(errorText(error))) return undefined;
+    throw new ChainIdentityError(
+      `${other.symbol} node: cannot look up ${txid} to check for a conflicting spend (is txindex=1 set?): ${errorText(error)}`,
+    );
+  }
+};
+
+/**
+ * Why `tx` can never be valid on the other chain, or undefined when it might
+ * be: one of its inputs exists in a confirmed block there and is already
+ * spent there, and `tx` itself is not on that chain, so something else spent
+ * it. Fails closed on any lookup error other than "not found".
+ */
+export const conflictOnOther = async (
+  other: IChainClient,
+  tx: RawTransaction,
+): Promise<string | undefined> => {
+  const rpc = (other as Partial<ChainClient>).rpc;
+  if (rpc === undefined) return undefined;
+
+  if ((await fetchOnOther(other, tx.txid)) !== undefined) return undefined;
+
+  for (const input of tx.vin) {
+    let unspent: unknown;
+    try {
+      // Confirmed blocks only: a mempool spend there proves nothing
+      unspent = await rpc.call(other, 'gettxout', [
+        input.txid,
+        input.vout,
+        false,
+      ]);
+    } catch (error) {
+      if (errorText(error) !== NO_RESULT_RPC) {
+        throw new ChainIdentityError(
+          `${other.symbol} node: gettxout ${input.txid}:${input.vout} failed: ${errorText(error)}`,
+        );
+      }
+      unspent = null;
+    }
+    if (unspent !== null && unspent !== undefined) continue;
+
+    const parent = await fetchOnOther(other, input.txid);
+    if (
+      parent !== undefined &&
+      parent.confirmations !== undefined &&
+      parent.confirmations > 0
+    ) {
+      return `${tx.txid} spends ${input.txid}:${input.vout}, which the ${other.symbol} chain already spent in a different transaction`;
+    }
+  }
+
+  return undefined;
+};
 
 export const classifyCoin = async (
   client: IChainClient,
@@ -136,6 +216,12 @@ export const classifyCoin = async (
       if (parent.verdict === 'unique') {
         result = parent;
         break;
+      }
+    }
+    if (result.verdict === 'shared' && options.other !== undefined) {
+      const conflict = await conflictOnOther(options.other, tx);
+      if (conflict !== undefined) {
+        result = { verdict: 'unique', reason: conflict };
       }
     }
     if (result.verdict === 'shared') {

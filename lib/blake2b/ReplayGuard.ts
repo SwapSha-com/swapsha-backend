@@ -72,7 +72,7 @@ export const checkLockupReplay = async (
       forkHeight,
       blocks,
       lockupTransactionId,
-      { isBlake2b: isBlake2bCurrency(ownChain.symbol) },
+      { isBlake2b: isBlake2bCurrency(ownChain.symbol), other: otherChain },
     );
     if (verdict === 'shared') {
       return `user lockup ${lockupTransactionId} is replayable onto the ${other} chain once its ancestry is replayed: ${why}`;

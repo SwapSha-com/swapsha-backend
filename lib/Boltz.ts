@@ -376,6 +376,7 @@ class Boltz {
             this.logger.info(
               await verifyProviderCoins(client, other, forkHeight, {
                 isBlake2b: currencyConfig.blake2b === true,
+                other,
               }),
             );
           }
