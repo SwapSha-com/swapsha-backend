@@ -22,6 +22,7 @@ import {
   setConflictDepth,
   verifyProviderCoins,
 } from './blake2b/ProviderCoins';
+import { verifyLightningIdentity } from './blake2b/LightningIdentity';
 import { setReplayForkHeight } from './blake2b/ReplayGuard';
 import { setSighashMode } from './blake2b/SighashMode';
 import ArkClient from './chain/ArkClient';
@@ -429,6 +430,19 @@ class Boltz {
           continue;
         }
 
+        // SwapSha D23/D29/D32: an LND on the wrong chain, or one that can open
+        // simple taproot channels, stops startup (fail closed)
+        const isBlake2b =
+          this.config.currencies.find((c) => c.symbol === symbol)?.blake2b ===
+          true;
+        this.logger.info(
+          verifyLightningIdentity(
+            symbol,
+            isBlake2b,
+            await client.getFeatureBits(),
+          ),
+        );
+
         currency.lndClients.set(client.id, client);
       }
 
@@ -627,15 +641,13 @@ class Boltz {
 
     this.config.currencies.forEach((currency) => {
       if (currency.blake2b === true) {
-        // SwapSha Phase 1: only the Knots wallet is known to sign BLAKE2b
-        // transactions with SIGHASH_UNIFIED, and no Lightning on this chain yet.
-        if (
-          currency.preferredWallet !== 'core' ||
-          (currency.lnds?.length ?? 0) > 0 ||
-          currency.cln !== undefined
-        ) {
+        // SwapSha D23 (amended Nov 4): only the Knots wallet is known to sign
+        // BLAKE2b transactions with SIGHASH_UNIFIED, so on-chain funds stay in
+        // Knots. Lightning legs use Lightning Fork's LND; CLN is not supported.
+        // Each LND is checked against the chain at startup (D29, D32).
+        if (currency.preferredWallet !== 'core' || currency.cln !== undefined) {
           throw new Error(
-            `${currency.symbol}: blake2b currencies need preferredWallet = "core" and no lnds/cln`,
+            `${currency.symbol}: blake2b currencies need preferredWallet = "core" and no cln`,
           );
         }
       }

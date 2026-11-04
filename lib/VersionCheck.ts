@@ -90,7 +90,8 @@ class VersionCheck {
     },
     [LndClient.serviceName]: {
       minimal: '0.19.0',
-      maximal: '0.21.1',
+      // SwapSha: Lightning Fork 0.21.6-beta-blake2b.23 (D16, D23)
+      maximal: '0.21.6',
     },
   };
 

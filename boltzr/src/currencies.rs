@@ -94,11 +94,13 @@ pub async fn connect_nodes<K: KeysHelper>(
                 } = currency;
 
                 let sighash_mode = if blake2b == Some(true) {
-                    // SwapSha Phase 1 (D23): Knots wallet only, no Lightning, and
-                    // never a public SHA-256 mempool service for BLAKE2b data.
-                    if lnd_configs.as_ref().is_some_and(|l| !l.is_empty()) || cln_config.is_some() {
+                    // SwapSha D23 (amended Nov 4): Knots wallet on chain, Lightning
+                    // Fork LND for Lightning legs (checked by the TypeScript
+                    // backend at startup), no CLN, and never a public SHA-256
+                    // mempool service for BLAKE2b data.
+                    if cln_config.is_some() {
                         return Err(anyhow!(
-                            "{}: blake2b currencies cannot have lnds or cln",
+                            "{}: blake2b currencies cannot have cln",
                             symbol
                         ));
                     }

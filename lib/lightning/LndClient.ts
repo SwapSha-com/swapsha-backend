@@ -288,6 +288,19 @@ class LndClient extends BaseClient<EventTypes> implements LightningClient {
   };
 
   /**
+   * SwapSha: the feature bits the node advertises (getInfo.features keys),
+   * used to tell a Lightning Fork node (bit 512, option_blake2b) from a stock
+   * one and to spot simple taproot channels (D29, D32).
+   */
+  public getFeatureBits = async (): Promise<number[]> => {
+    const info = await this.unaryLightningCall<
+      lndrpc.GetInfoRequest,
+      lndrpc.GetInfoResponse
+    >('getInfo', {});
+    return Object.keys(info.features ?? {}).map(Number);
+  };
+
+  /**
    * Creates an invoice
    */
   public addInvoice = (
