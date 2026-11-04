@@ -24,7 +24,7 @@ rpc() {
 
 check_nodes() {
   local ok=1
-  for spec in "BTC 48332" "XBT 48432"; do
+  for spec in "SHA256 48332" "BTC 48432"; do
     set -- $spec
     local info; info=$(rpc "$2" getblockchaininfo "" || true)
     if ! echo "$info" | grep -q '"error":null'; then

@@ -35,9 +35,10 @@ export const BLAKE = LIVE ? 48432 : 18543;
 
 /** Jest timeout per test: refunds on testnet4 wait for real timeouts. */
 export const TEST_TIMEOUT = LIVE ? 12 * 60 * 60 * 1000 : 600_000;
-export const port = (symbol: 'BTC' | 'XBT') => (symbol === 'BTC' ? SHA : BLAKE);
-export const modeOf = (symbol: 'BTC' | 'XBT'): SighashMode =>
-  symbol === 'XBT' ? 'unified' : 'legacy';
+export const port = (symbol: 'SHA256' | 'BTC') =>
+  symbol === 'SHA256' ? SHA : BLAKE;
+export const modeOf = (symbol: 'SHA256' | 'BTC'): SighashMode =>
+  symbol === 'BTC' ? 'unified' : 'legacy';
 
 export const rpc = async <T>(
   nodePort: number,
@@ -78,7 +79,7 @@ export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export const height = (nodePort: number) =>
   rpc<number>(nodePort, 'getblockcount');
 
-const chainName = (nodePort: number) => (nodePort === SHA ? 'BTC' : 'XBT');
+const chainName = (nodePort: number) => (nodePort === SHA ? 'SHA256' : 'BTC');
 
 /** testnet4: wait until `nodePort` reaches `target`, logging every new block. */
 const waitForHeight = async (nodePort: number, target: number) => {
@@ -204,8 +205,8 @@ export type SwapData = {
 
 export type CreatedSwap = {
   id: string;
-  from: 'BTC' | 'XBT';
-  to: 'BTC' | 'XBT';
+  from: 'SHA256' | 'BTC';
+  to: 'SHA256' | 'BTC';
   claimDetails: SwapData;
   lockupDetails: SwapData;
   claimKey: Uint8Array;
@@ -214,8 +215,8 @@ export type CreatedSwap = {
 };
 
 export const createSwap = async (
-  from: 'BTC' | 'XBT',
-  to: 'BTC' | 'XBT',
+  from: 'SHA256' | 'BTC',
+  to: 'SHA256' | 'BTC',
   userLockAmount = 100_000,
 ): Promise<CreatedSwap> => {
   const pairs =
@@ -402,7 +403,7 @@ export const accept = async (nodePort: number, txHex: string) =>
 /**
  * First signature of every input, wherever it sits: the witness for segwit
  * inputs, the first scriptSig push for legacy ones (Knots 29.4.1 hands out
- * P2PKH change on XBT, and those inputs carry no witness at all).
+ * P2PKH change on BTC, and those inputs carry no witness at all).
  */
 const firstSig = (tx: Transaction, i: number) => {
   const input = tx.getInput(i);
@@ -427,7 +428,7 @@ export const describeSigs = (tx: Transaction) =>
   }).join(', ');
 
 /**
- * Lock BTC for `swap` with a coin mined BEFORE the fork, signed the old way.
+ * Lock SHA256 for `swap` with a coin mined BEFORE the fork, signed the old way.
  * That transaction is valid on the BLAKE2b chain too: the replay D18 exists
  * to catch.
  */
@@ -481,7 +482,7 @@ export const lockUserWithPreForkCoin = async (
   );
   const txid = await rpc<string>(SHA, 'sendrawtransaction', [raw], '');
   console.log(
-    `user BTC lockup from pre-fork coin ${coin.txid}:${coin.vout}: ${txid}`,
+    `user SHA256 lockup from pre-fork coin ${coin.txid}:${coin.vout}: ${txid}`,
   );
   await mine(SHA);
   return { txid, raw };

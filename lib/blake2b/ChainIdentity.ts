@@ -47,7 +47,8 @@ export class ChainIdentityError extends Error {}
  * activated the BLAKE2b deployment, whose fork block carries a v2 header, and
  * (on mainnet) whose fork block is the known one. Any other Bitcoin currency
  * must be connected to a node where that deployment is not active. Pointing
- * BTC at a BLAKE2b node, or XBT at a SHA-256 node, stops startup.
+ * the SHA-256 currency at a BLAKE2b node, or the BLAKE2b currency at a
+ * SHA-256 node, stops startup.
  *
  * Mainnet BLAKE2b is refused until SWAPSHA_ALLOW_MAINNET=1 (Blueprint D7).
  */

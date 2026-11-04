@@ -84,7 +84,7 @@ export class StartupRefused extends Error {
 }
 
 /** A copy of boltz.conf with the wallet of one currency swapped out. */
-export const configWithWallet = (symbol: 'BTC' | 'XBT', wallet: string) => {
+export const configWithWallet = (symbol: 'SHA256' | 'BTC', wallet: string) => {
   const base = fs.readFileSync(`${DATA}/boltz.conf`, 'utf8');
   const sections = base.split('[[currencies]]');
   const idx = sections.findIndex((sec) =>

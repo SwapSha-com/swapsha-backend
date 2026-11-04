@@ -21,7 +21,7 @@ rpc() {
 }
 
 check_nodes() {
-  for spec in "BTC 18443" "XBT 18543"; do
+  for spec in "SHA256 18443" "BTC 18543"; do
     set -- $spec
     local out; out=$(rpc "$2" getbalance || true)
     if ! echo "$out" | grep -q '"error":null'; then

@@ -643,11 +643,9 @@ class Boltz {
         currency.symbol,
         currency.blake2b === true ? 'unified' : 'legacy',
       );
-      if (
-        currency.blake2b === true &&
-        !TimeoutDeltaProvider.blockTimes.has(currency.symbol)
-      ) {
-        // BLAKE2b chain targets the same 10 minute block interval as BTC
+      if (!TimeoutDeltaProvider.blockTimes.has(currency.symbol)) {
+        // Both Bitcoin chains target 10 minute blocks, whatever symbol the
+        // config gives them (BLAKE2b "BTC", SHA-256 "SHA256", Blueprint D27)
         TimeoutDeltaProvider.blockTimes.set(currency.symbol, 10);
       }
 

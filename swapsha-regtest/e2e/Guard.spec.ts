@@ -3,16 +3,16 @@
  * coin that can also exist on the other chain, and starts when it does not.
  *
  * Uses throwaway wallets so the real "swapsha" wallets stay clean:
- *   A. BTC wallet = "prefork": pre-fork coinbases. Refused.
- *   B. BTC wallet = "guard-tainted": one coin received AFTER the fork from a
+ *   A. SHA256 wallet = "prefork": pre-fork coinbases. Refused.
+ *   B. SHA256 wallet = "guard-tainted": one coin received AFTER the fork from a
  *      pre-fork coin, signed the old way. Its height passes a height-only
- *      check, but the deposit is replayable onto XBT. Refused by the ancestry
- *      walk. Then the deposit is actually replayed onto XBT and the backend
+ *      check, but the deposit is replayable onto BTC. Refused by the ancestry
+ *      walk. Then the deposit is actually replayed onto BTC and the backend
  *      is refused again, this time by the direct lookup on the other chain.
- *   C. XBT wallet = "guard-optin": one coin received from a pre-fork coin,
- *      signed with SIGHASH_UNIFIED by the Knots wallet. Unique to XBT. Starts.
- *   D. The same gap on the user side (D18): a BTC lockup funded from a
- *      replayable deposit that has not been replayed yet. XBT says
+ *   C. BTC wallet = "guard-optin": one coin received from a pre-fork coin,
+ *      signed with SIGHASH_UNIFIED by the Knots wallet. Unique to BTC. Starts.
+ *   D. The same gap on the user side (D18): a SHA256 lockup funded from a
+ *      replayable deposit that has not been replayed yet. BTC says
  *      missing-inputs, which the first D18 check treated as safe. The
  *      ancestry walk refuses it.
  *
@@ -160,11 +160,11 @@ run('D26: provider wallet guard, live', () => {
 
   afterAll(stop);
 
-  test('A. pre-fork coinbases in the BTC wallet: refused', async () => {
+  test('A. pre-fork coinbases in the SHA256 wallet: refused', async () => {
     await expectRefused(
-      configWithWallet('BTC', 'prefork'),
-      // The direct lookup usually fires first: the coinbase is on XBT too
-      /BTC wallet coin .* (before the fork|also exists on the XBT chain)/,
+      configWithWallet('SHA256', 'prefork'),
+      // The direct lookup usually fires first: the coinbase is on BTC too
+      /SHA256 wallet coin .* (before the fork|also exists on the BTC chain)/,
     );
   });
 
@@ -178,22 +178,22 @@ run('D26: provider wallet guard, live', () => {
     expect((await acceptWhenFinal(BLAKE, deposit.raw)).allowed).toBe(true);
 
     await expectRefused(
-      configWithWallet('BTC', 'guard-tainted'),
-      /can exist on the XBT chain too/,
+      configWithWallet('SHA256', 'guard-tainted'),
+      /can exist on the BTC chain too/,
     );
 
-    // Replay it for real, then the direct lookup on XBT catches it
+    // Replay it for real, then the direct lookup on BTC catches it
     await rpc(BLAKE, 'sendrawtransaction', [deposit.raw], '');
     await mine(BLAKE);
     await expectRefused(
-      configWithWallet('BTC', 'guard-tainted'),
-      /also exists on the XBT chain/,
+      configWithWallet('SHA256', 'guard-tainted'),
+      /also exists on the BTC chain/,
     );
 
     await drain(SHA, 'guard-tainted');
   });
 
-  test('C. XBT deposit from a pre-fork coin, signed with SIGHASH_UNIFIED: starts', async () => {
+  test('C. BTC deposit from a pre-fork coin, signed with SIGHASH_UNIFIED: starts', async () => {
     await loadOrCreate(BLAKE, 'guard-optin');
     await drain(BLAKE, 'guard-optin');
     const to = await rpc<string>(
@@ -210,10 +210,10 @@ run('D26: provider wallet guard, live', () => {
     expect(onSha.allowed).toBe(false);
     expect(onSha['reject-reason']).toMatch(/script-verify|signature|sig/i);
 
-    const log = await start(configWithWallet('XBT', 'guard-optin'));
+    const log = await start(configWithWallet('BTC', 'guard-optin'));
     const line = log
       .split('\n')
-      .find((l) => /XBT wallet: .* unique to this chain/.test(l));
+      .find((l) => /BTC wallet: .* unique to this chain/.test(l));
     console.log(`started: ${line?.replace(ANSI, '')}`);
     expect(line).toBeDefined();
     await stop();
@@ -233,7 +233,7 @@ run('D26: provider wallet guard, live', () => {
     expect((await acceptWhenFinal(BLAKE, deposit.raw)).allowed).toBe(true);
 
     await start();
-    const swap = await createSwap('BTC', 'XBT');
+    const swap = await createSwap('SHA256', 'BTC');
     const lockId = await rpc<string>(
       SHA,
       'sendtoaddress',
@@ -241,9 +241,9 @@ run('D26: provider wallet guard, live', () => {
       'guard-user',
     );
     const lockHex = await rpc<string>(SHA, 'getrawtransaction', [lockId], '');
-    // What the first D18 check saw: inputs missing on XBT, so "safe"
+    // What the first D18 check saw: inputs missing on BTC, so "safe"
     const onXbt = await acceptWhenFinal(BLAKE, lockHex);
-    console.log(`lockup ${lockId} on XBT: ${JSON.stringify(onXbt)}`);
+    console.log(`lockup ${lockId} on BTC: ${JSON.stringify(onXbt)}`);
     expect(onXbt['reject-reason']).toMatch(/missing-inputs/);
     await mine(SHA);
 

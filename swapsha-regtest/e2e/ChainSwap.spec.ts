@@ -13,7 +13,7 @@
  *   SWAPSHA_NET=testnet4 npx jest --rootDir . swapsha-regtest/e2e/ChainSwap.spec.ts --runInBand
  *
  * The property every test checks: nothing the swap puts on one chain can be
- * valid on the other. HTLC spends signed by SwapSha's own code on the XBT side
+ * valid on the other. HTLC spends signed by SwapSha's own code on the BTC side
  * always carry SIGHASH_UNIFIED (0x21). Wallet-funded transactions are safe
  * either because they opted in or because their coins exist on one chain only.
  */
@@ -50,19 +50,19 @@ const expectUnified = (witnessSig: Uint8Array) => {
   expect(witnessSig[64]).toBe(UNIFIED);
 };
 
-describe('B5: chain swaps between BTC (SHA-256) and XBT (BLAKE2b)', () => {
+describe('B5: chain swaps between Spamcoin (SHA256, the SHA-256 chain) and BTC (BLAKE2b)', () => {
   jest.setTimeout(TEST_TIMEOUT);
 
   beforeAll(ensureUserWallets);
 
-  test('BTC -> XBT completes with a replay-protected XBT claim', async () => {
-    const swap = await createSwap('BTC', 'XBT');
+  test('SHA256 -> BTC completes with a replay-protected BTC claim', async () => {
+    const swap = await createSwap('SHA256', 'BTC');
     await lockUser(swap);
 
     await waitFor(swap.id, 'transaction.server.mempool', SHA);
     const lock = await serverLockup(swap);
     console.log(
-      `server XBT lockup ${lock.id}: ${describeSigs(parseTx(lock.hex))}`,
+      `server BTC lockup ${lock.id}: ${describeSigs(parseTx(lock.hex))}`,
     );
     expect((await accept(SHA, lock.hex)).allowed).toBe(false);
 
@@ -72,15 +72,15 @@ describe('B5: chain swaps between BTC (SHA-256) and XBT (BLAKE2b)', () => {
     const claim = await userClaim(swap);
     expectUnified(claim.getInput(0).finalScriptWitness![0]);
     console.log(
-      `user XBT claim: ${await rpc(BLAKE, 'sendrawtransaction', [claim.hex], '')}`,
+      `user BTC claim: ${await rpc(BLAKE, 'sendrawtransaction', [claim.hex], '')}`,
     );
     await mine(BLAKE);
 
     await waitFor(swap.id, 'transaction.claimed', SHA);
   });
 
-  test('XBT -> BTC completes, and the backend claims the XBT with 0x21', async () => {
-    const swap = await createSwap('XBT', 'BTC');
+  test('BTC -> SHA256 completes, and the backend claims the BTC with 0x21', async () => {
+    const swap = await createSwap('BTC', 'SHA256');
     const userLock = await lockUser(swap);
     const userLockHex = await rpc<string>(
       BLAKE,
@@ -89,14 +89,14 @@ describe('B5: chain swaps between BTC (SHA-256) and XBT (BLAKE2b)', () => {
       '',
     );
     console.log(
-      `user XBT lockup ${userLock}: ${describeSigs(parseTx(userLockHex))}`,
+      `user BTC lockup ${userLock}: ${describeSigs(parseTx(userLockHex))}`,
     );
     expect((await accept(SHA, userLockHex)).allowed).toBe(false);
 
     await waitFor(swap.id, 'transaction.server.mempool', BLAKE);
     const lock = await serverLockup(swap);
     console.log(
-      `server BTC lockup ${lock.id}: ${describeSigs(parseTx(lock.hex))}`,
+      `server SHA256 lockup ${lock.id}: ${describeSigs(parseTx(lock.hex))}`,
     );
     // Funded from post-fork coins, so it cannot exist on the BLAKE2b chain
     await expectInvalidOn(BLAKE, lock.hex);
@@ -106,20 +106,20 @@ describe('B5: chain swaps between BTC (SHA-256) and XBT (BLAKE2b)', () => {
 
     const claim = await userClaim(swap);
     console.log(
-      `user BTC claim: ${await rpc(SHA, 'sendrawtransaction', [claim.hex], '')}`,
+      `user SHA256 claim: ${await rpc(SHA, 'sendrawtransaction', [claim.hex], '')}`,
     );
     await mine(SHA);
 
     await waitFor(swap.id, 'transaction.claimed', BLAKE);
     const serverClaim = parseTx(await findSpend(BLAKE, userLock));
     console.log(
-      `server XBT claim ${serverClaim.id}: ${describeSigs(serverClaim)}`,
+      `server BTC claim ${serverClaim.id}: ${describeSigs(serverClaim)}`,
     );
     expectUnified(serverClaim.getInput(0).finalScriptWitness![0]);
   });
 
-  test('user refunds an underpaid XBT lockup after the timeout, signed 0x21', async () => {
-    const swap = await createSwap('XBT', 'BTC');
+  test('user refunds an underpaid BTC lockup after the timeout, signed 0x21', async () => {
+    const swap = await createSwap('BTC', 'SHA256');
     const userLock = await lockUser(swap, swap.lockupDetails.amount - 20_000);
     await waitFor(swap.id, 'transaction.lockupFailed', BLAKE, [
       'transaction.lockupFailed',
@@ -130,13 +130,13 @@ describe('B5: chain swaps between BTC (SHA-256) and XBT (BLAKE2b)', () => {
     expectUnified(refund.getInput(0).finalScriptWitness![0]);
     expect(await accept(BLAKE, refund.hex)).toMatchObject({ allowed: true });
     console.log(
-      `user XBT refund: ${await rpc(BLAKE, 'sendrawtransaction', [refund.hex], '')}`,
+      `user BTC refund: ${await rpc(BLAKE, 'sendrawtransaction', [refund.hex], '')}`,
     );
     await mine(BLAKE);
   });
 
-  test('backend refunds its XBT lockup when the user never claims, signed 0x21', async () => {
-    const swap = await createSwap('BTC', 'XBT');
+  test('backend refunds its BTC lockup when the user never claims, signed 0x21', async () => {
+    const swap = await createSwap('SHA256', 'BTC');
     const userLock = await lockUser(swap);
     await waitFor(swap.id, 'transaction.server.mempool', SHA);
     const lock = await serverLockup(swap);
@@ -148,22 +148,22 @@ describe('B5: chain swaps between BTC (SHA-256) and XBT (BLAKE2b)', () => {
 
     const serverRefund = parseTx(await findSpend(BLAKE, lock.id));
     console.log(
-      `server XBT refund ${serverRefund.id}: ${describeSigs(serverRefund)}`,
+      `server BTC refund ${serverRefund.id}: ${describeSigs(serverRefund)}`,
     );
     expectUnified(serverRefund.getInput(0).finalScriptWitness![0]);
 
-    await mineTo(port('BTC'), swap.lockupDetails.timeoutBlockHeight);
+    await mineTo(port('SHA256'), swap.lockupDetails.timeoutBlockHeight);
     const refund = await userRefund(swap, userLock);
     console.log(
-      `user BTC refund: ${await rpc(SHA, 'sendrawtransaction', [refund.hex], '')}`,
+      `user SHA256 refund: ${await rpc(SHA, 'sendrawtransaction', [refund.hex], '')}`,
     );
     await mine(SHA);
   });
 
   // Needs pre-fork coins, which exist only on regtest here
   (LIVE ? describe.skip : describe)('D18 (regtest only)', () => {
-    test('D18: backend refuses a BTC lockup that is replayable onto BLAKE2b', async () => {
-      const swap = await createSwap('BTC', 'XBT');
+    test('D18: backend refuses a SHA256 lockup that is replayable onto BLAKE2b', async () => {
+      const swap = await createSwap('SHA256', 'BTC');
       const { raw } = await lockUserWithPreForkCoin(swap);
       // Precondition: this lockup really is valid on the BLAKE2b chain
       expect((await acceptWhenFinal(BLAKE, raw)).allowed).toBe(true);

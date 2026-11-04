@@ -21,3 +21,11 @@ export const sighashModeFor = (symbol: string): SighashMode =>
 
 export const isBlake2bCurrency = (symbol: string): boolean =>
   sighashModeFor(symbol) === 'unified';
+
+/**
+ * True for every UTXO Bitcoin currency SwapSha configures, on either chain
+ * (BLAKE2b "BTC" or SHA-256 "SHA256", Blueprint D27), whatever its symbol.
+ * Code that Boltz keys on the literal 'BTC' uses this instead.
+ */
+export const isSwapshaBitcoinCurrency = (symbol: string): boolean =>
+  modes.has(symbol);
