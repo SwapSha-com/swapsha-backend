@@ -13,9 +13,15 @@ import VersionCheck from './VersionCheck';
 import Api from './api/Api';
 import {
   blake2bForkHeight,
+  networkKind,
   verifyChainIdentity,
 } from './blake2b/ChainIdentity';
-import { verifyProviderCoins } from './blake2b/ProviderCoins';
+import {
+  DEFAULT_CONFLICT_DEPTH,
+  MAINNET_CONFLICT_DEPTH,
+  setConflictDepth,
+  verifyProviderCoins,
+} from './blake2b/ProviderCoins';
 import { setReplayForkHeight } from './blake2b/ReplayGuard';
 import { setSighashMode } from './blake2b/SighashMode';
 import ArkClient from './chain/ArkClient';
@@ -357,6 +363,12 @@ class Boltz {
             .chainClient as ChainClient,
         );
         setReplayForkHeight(forkHeight);
+        // A split coin is trusted once its conflicting spend is this deep
+        setConflictDepth(
+          networkKind(blake2bCurrency.network) === 'mainnet'
+            ? MAINNET_CONFLICT_DEPTH
+            : DEFAULT_CONFLICT_DEPTH,
+        );
         // Both sides: a coin that also exists on the other chain can be
         // spent there by replaying our transaction (D26).
         const symbols = this.config.currencies.map((c) => c.symbol);

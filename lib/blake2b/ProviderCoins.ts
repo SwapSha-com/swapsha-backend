@@ -1,6 +1,6 @@
 import type ChainClient from '../chain/ChainClient';
 import type { IChainClient } from '../chain/ChainClient';
-import type { RawTransaction } from '../consts/Types';
+import type { BlockVerbose, RawTransaction } from '../consts/Types';
 import { ChainIdentityError } from './ChainIdentity';
 
 /**
@@ -47,6 +47,28 @@ type Options = {
    * be valid there. This is how a coin from before the fork is split.
    */
   other?: IChainClient;
+  /**
+   * How many blocks deep that conflicting spend must be before the split is
+   * trusted. A reorg on the other chain that drops the spend would undo the
+   * split, so a shallower spend counts as shared for now (retry later).
+   * Defaults to the value set with setConflictDepth.
+   */
+  minConflictDepth?: number;
+};
+
+/** Testnet default; Boltz raises it on mainnet at startup. */
+export const DEFAULT_CONFLICT_DEPTH = 6;
+export const MAINNET_CONFLICT_DEPTH = 100;
+let conflictDepth = DEFAULT_CONFLICT_DEPTH;
+
+/** Set once at startup from the configured network. */
+export const setConflictDepth = (depth: number) => {
+  if (!Number.isInteger(depth) || depth < 1) {
+    throw new ChainIdentityError(
+      `conflict depth must be a positive integer, got ${depth}`,
+    );
+  }
+  conflictDepth = depth;
 };
 
 const SIGHASH_UNIFIED = 0x20;
@@ -103,21 +125,75 @@ const fetchOnOther = async (
   }
 };
 
+// Blocks are immutable by hash, so a scan can be shared across one walk
+const blockCache = new Map<string, BlockVerbose>();
+const BLOCK_CACHE_MAX = 500;
+
+const cachedBlock = async (
+  other: Partial<ChainClient>,
+  hash: string,
+): Promise<BlockVerbose> => {
+  const hit = blockCache.get(hash);
+  if (hit !== undefined) return hit;
+  const block = await other.getBlockVerbose!(hash);
+  if (blockCache.size >= BLOCK_CACHE_MAX) {
+    blockCache.delete(blockCache.keys().next().value!);
+  }
+  blockCache.set(hash, block);
+  return block;
+};
+
 /**
- * Why `tx` can never be valid on the other chain, or undefined when it might
- * be: one of its inputs exists in a confirmed block there and is already
- * spent there, and `tx` itself is not on that chain, so something else spent
- * it. Fails closed on any lookup error other than "not found".
+ * Depth of the confirmed spend of `txid:vout` on the other chain if it lies
+ * within the last `window` blocks, or undefined when it is deeper than that.
+ * Only called once gettxout has shown the output is spent in a confirmed
+ * block, so not finding it near the tip means it is at least `window` deep.
+ */
+const recentSpendDepth = async (
+  other: IChainClient,
+  txid: string,
+  vout: number,
+  window: number,
+): Promise<number | undefined> => {
+  const client = other as Partial<ChainClient>;
+  if (client.getBlockVerbose === undefined) {
+    throw new ChainIdentityError(
+      `${other.symbol} node: cannot read blocks to check how deep a conflicting spend is`,
+    );
+  }
+  const { blocks: tip } = await other.getBlockchainInfo();
+  for (let depth = 1; depth <= window && tip - depth + 1 >= 0; depth++) {
+    const block = await cachedBlock(
+      client,
+      await other.getBlockhash(tip - depth + 1),
+    );
+    const spends = block.tx.some((t) =>
+      t.vin.some((i) => i.txid === txid && i.vout === vout),
+    );
+    if (spends) return depth;
+  }
+  return undefined;
+};
+
+/**
+ * Whether `tx` can never be valid on the other chain: one of its inputs
+ * exists in a confirmed block there and is already spent there, `tx` itself
+ * is not on that chain, so something else spent it. That spend must be at
+ * least `depth` blocks deep, or a reorg could undo it; a shallower one gives
+ * 'shallow' (shared for now). Undefined when no input conflicts. Fails
+ * closed on any lookup error other than "not found".
  */
 export const conflictOnOther = async (
   other: IChainClient,
   tx: RawTransaction,
-): Promise<string | undefined> => {
+  depth = conflictDepth,
+): Promise<{ verdict: Uniqueness; reason: string } | undefined> => {
   const rpc = (other as Partial<ChainClient>).rpc;
   if (rpc === undefined) return undefined;
 
   if ((await fetchOnOther(other, tx.txid)) !== undefined) return undefined;
 
+  let shallow: string | undefined;
   for (const input of tx.vin) {
     let unspent: unknown;
     try {
@@ -139,15 +215,31 @@ export const conflictOnOther = async (
 
     const parent = await fetchOnOther(other, input.txid);
     if (
-      parent !== undefined &&
-      parent.confirmations !== undefined &&
-      parent.confirmations > 0
+      parent === undefined ||
+      parent.confirmations === undefined ||
+      parent.confirmations <= 0
     ) {
-      return `${tx.txid} spends ${input.txid}:${input.vout}, which the ${other.symbol} chain already spent in a different transaction`;
+      continue;
     }
+
+    const found = await recentSpendDepth(
+      other,
+      input.txid,
+      input.vout,
+      depth - 1,
+    );
+    if (found === undefined) {
+      return {
+        verdict: 'unique',
+        reason: `${tx.txid} spends ${input.txid}:${input.vout}, which the ${other.symbol} chain already spent in a different transaction at least ${depth} blocks deep`,
+      };
+    }
+    shallow ??= `${tx.txid} conflicts with a spend of ${input.txid}:${input.vout} on the ${other.symbol} chain that is only ${found} block(s) deep; needs ${depth} before the split is trusted`;
   }
 
-  return undefined;
+  return shallow === undefined
+    ? undefined
+    : { verdict: 'shared', reason: shallow };
 };
 
 export const classifyCoin = async (
@@ -218,13 +310,19 @@ export const classifyCoin = async (
         break;
       }
     }
+    let shallowSplit = false;
     if (result.verdict === 'shared' && options.other !== undefined) {
-      const conflict = await conflictOnOther(options.other, tx);
+      const conflict = await conflictOnOther(
+        options.other,
+        tx,
+        options.minConflictDepth ?? conflictDepth,
+      );
       if (conflict !== undefined) {
-        result = { verdict: 'unique', reason: conflict };
+        result = conflict;
+        shallowSplit = conflict.verdict === 'shared';
       }
     }
-    if (result.verdict === 'shared') {
+    if (result.verdict === 'shared' && !shallowSplit) {
       // Name the root cause only: nesting every hop grows without bound
       const first = memo.get(tx.vin[0].txid);
       if (first !== undefined) {
