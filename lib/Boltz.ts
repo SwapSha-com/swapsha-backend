@@ -22,6 +22,7 @@ import {
   setConflictDepth,
   verifyProviderCoins,
 } from './blake2b/ProviderCoins';
+import { setPaceBounds } from './blake2b/ChainPace';
 import { verifyLightningIdentity } from './blake2b/LightningIdentity';
 import { setReplayForkHeight } from './blake2b/ReplayGuard';
 import { setSighashMode } from './blake2b/SighashMode';
@@ -655,6 +656,13 @@ class Boltz {
         currency.symbol,
         currency.blake2b === true ? 'unified' : 'legacy',
       );
+      // SwapSha D30: measured pace bounds and the stall guard
+      if (currency.pace !== undefined) {
+        setPaceBounds(currency.symbol, currency.pace);
+        this.logger.info(
+          `${currency.symbol} pace: ${currency.pace.fastMinutesPerBlock} to ${currency.pace.slowMinutesPerBlock} minutes per block${currency.pace.maxTipAgeMinutes !== undefined ? `, Lightning swaps paused when the tip is older than ${currency.pace.maxTipAgeMinutes} minutes` : ''}`,
+        );
+      }
       if (!TimeoutDeltaProvider.blockTimes.has(currency.symbol)) {
         // Both Bitcoin chains target 10 minute blocks, whatever symbol the
         // config gives them (BLAKE2b "BTC", SHA-256 "SHA256", Blueprint D27)

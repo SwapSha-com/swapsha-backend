@@ -6,11 +6,13 @@ import {
   formatError,
   fromProtoInt,
   getHexBuffer,
+  getChainCurrency,
   getHexString,
   getLightningCurrency,
   getTsString,
   splitPairId,
 } from '../Utils';
+import { staleChainReason } from '../blake2b/ChainPace';
 import { SwapUpdateEvent } from '../consts/Enums';
 import type { AnySwap } from '../consts/Types';
 import type ReverseSwap from '../db/models/ReverseSwap';
@@ -150,6 +152,20 @@ class PaymentHandler {
     }
 
     const { base, quote } = splitPairId(swap.pair);
+
+    // SwapSha D30 stall guard: do not pay while either chain's tip is stale.
+    // The payment is not failed; it is tried again on the next retry.
+    const stale = await staleChainReason([
+      this.currencies.get(getChainCurrency(base, quote, swap.orderSide, false))
+        ?.chainClient,
+      this.currencies.get(
+        getLightningCurrency(base, quote, swap.orderSide, false),
+      )?.chainClient,
+    ]);
+    if (stale !== undefined) {
+      this.logger.warn(`Not paying invoice of Swap ${swap.id} yet: ${stale}`);
+      return undefined;
+    }
 
     const cltvLimit = await this.timeoutDeltaProvider.getCltvLimit(swap);
     const decoded = await this.sidecar.decodeInvoiceOrOffer(swap.invoice!);

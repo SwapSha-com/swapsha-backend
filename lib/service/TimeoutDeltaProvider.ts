@@ -1,3 +1,8 @@
+import {
+  blocksToOutlast,
+  blocksWithin,
+  getPaceBounds,
+} from '../blake2b/ChainPace';
 import type { ConfigType, SwapConfig } from '../Config';
 import type Logger from '../Logger';
 import {
@@ -86,14 +91,22 @@ class TimeoutDeltaProvider {
     toSymbol: string,
     blocks: number,
   ): number => {
-    const minutes = blocks * TimeoutDeltaProvider.blockTimes.get(fromSymbol)!;
-
     // In the context this function is used, we calculate the timeout of the first leg of a
-    // reverse swap which has to be longer than the second one
-    return Math.ceil(minutes / TimeoutDeltaProvider.blockTimes.get(toSymbol)!);
+    // reverse swap which has to be longer than the second one.
+    // SwapSha D30: with measured pace bounds, `from` at its slowest and `to`
+    // at its fastest; without them, nominal block times as upstream.
+    return blocksToOutlast(
+      blocks,
+      TimeoutDeltaProvider.pace(fromSymbol),
+      TimeoutDeltaProvider.pace(toSymbol),
+    );
   };
 
   public static minutesToSeconds = (minutes: number) => Math.ceil(minutes * 60);
+
+  /** SwapSha D30: measured pace bounds, or the nominal block time */
+  public static pace = (symbol: string) =>
+    getPaceBounds(symbol, TimeoutDeltaProvider.blockTimes.get(symbol)!);
 
   public init = (
     pairs: PairConfig[],
@@ -196,10 +209,13 @@ class TimeoutDeltaProvider {
           break;
       }
 
-      blocksLeft = TimeoutDeltaProvider.convertBlocks(
-        chainCurrency.symbol,
-        lightningCurrency,
+      // SwapSha D30: the Lightning payment must be over before the user can
+      // refund on chain, so the chain at its fastest and Lightning's chain at
+      // its slowest (convertBlocks would assume the opposite pairing)
+      blocksLeft = blocksWithin(
         swap.timeoutBlockHeight - currentBlock,
+        TimeoutDeltaProvider.pace(chainCurrency.symbol),
+        TimeoutDeltaProvider.pace(lightningCurrency),
       );
     }
 
@@ -367,20 +383,22 @@ class TimeoutDeltaProvider {
     );
 
     if (version === SwapVersion.Taproot) {
+      // SwapSha D30: the chain HTLC must outlast the Lightning CLTV
       return [
-        Math.ceil(
-          (lightningCltv *
-            TimeoutDeltaProvider.blockTimes.get(lightningCurrency)!) /
-            TimeoutDeltaProvider.blockTimes.get(chainCurrency)!,
+        blocksToOutlast(
+          lightningCltv,
+          TimeoutDeltaProvider.pace(lightningCurrency),
+          TimeoutDeltaProvider.pace(chainCurrency),
         ),
         true,
       ];
     }
 
     // Add some buffer to make sure we have enough limit when the transaction confirms
+    // SwapSha D30: Lightning's chain at its slowest
     const routeDeltaMinutes = Math.ceil(
       routeDeltaRelative *
-        TimeoutDeltaProvider.blockTimes.get(lightningCurrency)!,
+        TimeoutDeltaProvider.pace(lightningCurrency).slowMinutesPerBlock,
     );
 
     const routingOffset = this.routingOffsets.getOffset(
@@ -393,8 +411,9 @@ class TimeoutDeltaProvider {
     );
     const finalExpiry = routeDeltaMinutes + routingOffset;
 
+    // SwapSha D30: and the chain at its fastest
     const minTimeout = Math.ceil(
-      finalExpiry / TimeoutDeltaProvider.blockTimes.get(chainCurrency)!,
+      finalExpiry / TimeoutDeltaProvider.pace(chainCurrency).fastMinutesPerBlock,
     );
 
     if (minTimeout > chainTimeout.swapMaximal) {

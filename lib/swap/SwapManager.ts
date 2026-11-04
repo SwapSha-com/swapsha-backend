@@ -63,6 +63,7 @@ import ScriptPubKeyRepository from '../db/repositories/ScriptPubKeyRepository';
 import SwapRepository from '../db/repositories/SwapRepository';
 import TransactionLabelRepository from '../db/repositories/TransactionLabelRepository';
 import { msatToSat } from '../lightning/ChannelUtils';
+import { staleChainReason } from '../blake2b/ChainPace';
 import { checkInvoiceChain } from '../blake2b/LightningIdentity';
 import { isBlake2bCurrency } from '../blake2b/SighashMode';
 import type { HopHint, LightningClient } from '../lightning/LightningClient';
@@ -632,6 +633,15 @@ class SwapManager {
     if (decodedInvoice.type === InvoiceType.Offer) {
       throw Errors.NO_OFFERS_ALLOWED();
     }
+    // SwapSha D30 stall guard: no new Lightning swaps while a tip is stale
+    const stale = await staleChainReason([
+      this.currencies.get(base)?.chainClient,
+      this.currencies.get(quote)?.chainClient,
+    ]);
+    if (stale !== undefined) {
+      throw new Error(stale);
+    }
+
     // SwapSha D29: the invoice must be for the swap's Lightning chain
     checkInvoiceChain(
       swap.lightningCurrency,

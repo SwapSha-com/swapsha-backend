@@ -1,3 +1,4 @@
+import type { PaceBounds } from './blake2b/ChainPace';
 import toml from '@iarna/toml';
 import fs from 'fs';
 import path from 'path';
@@ -77,6 +78,12 @@ type BaseCurrencyConfig<T = ChainConfig> = {
    * preferredWallet = "core" (the Knots wallet signs with the opt-in).
    */
   blake2b?: boolean;
+
+  /**
+   * SwapSha D30: measured pace bounds in minutes per block, and the stall
+   * guard's maximum tip age. Leave out for the nominal block time.
+   */
+  pace?: PaceBounds;
 
   chain: T;
 };

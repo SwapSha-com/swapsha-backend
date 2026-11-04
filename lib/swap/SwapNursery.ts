@@ -35,6 +35,7 @@ import {
   getRate,
   splitPairId,
 } from '../Utils';
+import { staleChainReason } from '../blake2b/ChainPace';
 import { quarantineSharedCoins } from '../blake2b/ProviderCoins';
 import {
   checkLockupReplay,
@@ -1912,6 +1913,19 @@ class SwapNursery extends TypedEventEmitter<SwapNurseryEvents> {
       return;
     }
     const lightningClient = resolved.lightningClient;
+
+    // SwapSha D30 stall guard: do not lock on chain while either chain's tip
+    // is stale; the user's hold invoice payment is given back at its expiry
+    const stale = await staleChainReason([
+      chainCurrency.chainClient,
+      this.currencies.get(lightningSymbol)?.chainClient,
+    ]);
+    if (stale !== undefined) {
+      this.logger.warn(
+        `Skipping lockup of Reverse Swap ${reverseSwap.id}: ${stale}`,
+      );
+      return;
+    }
 
     const wallet = this.walletManager.wallets.get(chainSymbol)!;
 

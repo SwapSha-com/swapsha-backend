@@ -1,3 +1,4 @@
+import { staleChainReason } from '../blake2b/ChainPace';
 import type { Transaction } from '@scure/btc-signer';
 import type { SwapTreeSerializer } from 'boltz-core';
 import { OutputType } from 'boltz-core';
@@ -1930,6 +1931,15 @@ class Service {
         args.claimAddress = checkEvmAddress(args.claimAddress);
 
         break;
+    }
+
+    // SwapSha D30 stall guard: no new Lightning swaps while a tip is stale
+    const stale = await staleChainReason([
+      this.currencies.get(sending)?.chainClient,
+      this.currencies.get(receiving)?.chainClient,
+    ]);
+    if (stale !== undefined) {
+      throw new Error(stale);
     }
 
     const [onchainTimeoutBlockDelta] =
