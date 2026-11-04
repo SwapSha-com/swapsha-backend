@@ -1,5 +1,6 @@
 import { ChainIdentityError } from '../../../lib/blake2b/ChainIdentity';
 import {
+  resetUniqueCache,
   setConflictDepth,
   verifyProviderCoins,
 } from '../../../lib/blake2b/ProviderCoins';
@@ -90,6 +91,9 @@ const node = (
 const OLD = { height: 150, coinbase: true };
 
 describe('conflicting spend on the other chain', () => {
+  // Verdicts are remembered between checks; fake txids repeat across tests
+  beforeEach(() => resetUniqueCache());
+
   test('accepts a coin whose input the other chain spent differently', async () => {
     const btc = node(
       'BTC',

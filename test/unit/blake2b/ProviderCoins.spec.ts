@@ -1,6 +1,7 @@
 import { ChainIdentityError } from '../../../lib/blake2b/ChainIdentity';
 import {
   isUnifiedSignature,
+  resetUniqueCache,
   verifyProviderCoins,
 } from '../../../lib/blake2b/ProviderCoins';
 import type { IChainClient } from '../../../lib/chain/ChainClient';
@@ -76,6 +77,9 @@ describe('isUnifiedSignature', () => {
 });
 
 describe('verifyProviderCoins', () => {
+  // Verdicts are remembered between checks; fake txids repeat across tests
+  beforeEach(() => resetUniqueCache());
+
   test('passes post-fork coinbases and their descendants', async () => {
     const btc = chain(
       'BTC',

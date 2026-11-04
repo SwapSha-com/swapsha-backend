@@ -35,7 +35,13 @@ import {
   getRate,
   splitPairId,
 } from '../Utils';
-import { checkLockupReplay, isReplayPair } from '../blake2b/ReplayGuard';
+import { quarantineSharedCoins } from '../blake2b/ProviderCoins';
+import {
+  checkLockupReplay,
+  getReplayForkHeight,
+  isReplayPair,
+} from '../blake2b/ReplayGuard';
+import { isBlake2bCurrency } from '../blake2b/SighashMode';
 import type ArkClient from '../chain/ArkClient';
 import type { IChainClient } from '../chain/ChainClient';
 import { LegacyReverseSwapOutputType, etherDecimals } from '../consts/Consts';
@@ -1264,6 +1270,45 @@ class SwapNursery extends TypedEventEmitter<SwapNurseryEvents> {
         await this.lockupFailed(
           swap,
           stored.length <= 255 ? stored : `${stored.slice(0, 252)}...`,
+        );
+        return;
+      }
+
+      // SwapSha D26 at lockup time: the startup guard cannot see deposits
+      // made while running. Quarantine any provider coin that could also
+      // exist on the other chain before the wallet picks coins.
+      const fork = getReplayForkHeight();
+      try {
+        if (fork === undefined) {
+          throw new Error('fork height unknown');
+        }
+        const { checked, quarantined } = await quarantineSharedCoins(
+          sendingCurrency.chainClient,
+          receivingClient,
+          fork,
+          {
+            isBlake2b: isBlake2bCurrency(swap.sendingData.symbol),
+            other: receivingClient,
+          },
+        );
+        for (const coin of quarantined) {
+          this.logger.error(
+            `Quarantined ${swap.sendingData.symbol} provider coin ${coin.outpoint} (${coin.amount}) before lockup of Chain Swap ${swap.id}: ${coin.reason}. It is locked in the wallet; move it out.`,
+          );
+        }
+        if (checked > 0) {
+          this.logger.debug(
+            `${swap.sendingData.symbol} provider coins re-checked before lockup of Chain Swap ${swap.id}: ${checked} new transaction(s) walked`,
+          );
+        }
+      } catch (error) {
+        const reason = `PROVIDER_GUARD: cannot prove ${swap.sendingData.symbol} provider coins are unique: ${formatError(error)}`;
+        this.logger.error(
+          `Refusing to lock for Chain Swap ${swap.id}: ${reason}`,
+        );
+        await this.lockupFailed(
+          swap,
+          reason.length <= 255 ? reason : `${reason.slice(0, 252)}...`,
         );
         return;
       }

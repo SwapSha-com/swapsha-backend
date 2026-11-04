@@ -378,7 +378,7 @@ export const verifyProviderCoins = async (
     client.getBlockchainInfo(),
   ]);
   const tip = info.blocks;
-  const memo = new Map<string, Verdict>();
+  const memo = seededMemo(client.symbol);
   const visits = { count: 0 };
 
   // Every Core-backed client has rpc(); a mock in a unit test may not
@@ -412,5 +412,109 @@ export const verifyProviderCoins = async (
     }
   }
 
+  rememberUnique(client.symbol, memo);
   return `${client.symbol} wallet: ${utxos.length} coin(s), all unique to this chain (fork at ${forkHeight}, ${visits.count} transaction(s) checked)`;
+};
+
+/**
+ * 'unique' verdicts per chain, kept between checks. They do not change once
+ * reached (a post-fork coinbase, a SIGHASH_UNIFIED signature, or a
+ * conflicting spend already buried past the reorg depth), so each lockup only
+ * walks coins it has not seen. 'shared' verdicts are never kept: a shallow
+ * split can become unique later.
+ */
+const uniqueByChain = new Map<string, Map<string, Verdict>>();
+
+const seededMemo = (symbol: string) =>
+  new Map<string, Verdict>(uniqueByChain.get(symbol) ?? []);
+
+const rememberUnique = (symbol: string, memo: Map<string, Verdict>) => {
+  let known = uniqueByChain.get(symbol);
+  if (known === undefined) {
+    known = new Map();
+    uniqueByChain.set(symbol, known);
+  }
+  for (const [txid, verdict] of memo) {
+    if (verdict.verdict === 'unique') known.set(txid, verdict);
+  }
+};
+
+/** Test hook: forget every remembered verdict. */
+export const resetUniqueCache = () => uniqueByChain.clear();
+
+export type Quarantined = { outpoint: string; amount: number; reason: string };
+
+/**
+ * D26 at lockup time. The startup guard only sees the wallet as it was at
+ * startup: a deposit, or a coin unlocked, while the backend runs would be
+ * spent unchecked. Run this right before every server lockup. Any coin that
+ * can also exist on the other chain is locked in the wallet (persistently),
+ * so the lockup that follows cannot select it; the caller logs it for the
+ * operator. Lookup failures throw (fail closed), and the caller then refuses
+ * the lockup.
+ */
+export const quarantineSharedCoins = async (
+  client: IChainClient,
+  other: IChainClient,
+  forkHeight: number,
+  options: Options,
+): Promise<{ checked: number; quarantined: Quarantined[] }> => {
+  const [utxos, info] = await Promise.all([
+    client.listUnspent(0),
+    client.getBlockchainInfo(),
+  ]);
+  const memo = seededMemo(client.symbol);
+  const visits = { count: 0 };
+  const rpcOther = (other as Partial<ChainClient>).rpc;
+  const quarantined: Quarantined[] = [];
+
+  for (const utxo of utxos) {
+    const outpoint = `${utxo.txid}:${utxo.vout}`;
+    if (rpcOther !== undefined) {
+      const there = await gettxout(rpcOther, other, utxo.txid, utxo.vout);
+      if (there !== null && there !== undefined) {
+        quarantined.push({
+          outpoint,
+          amount: utxo.amount,
+          reason: `also exists on the ${other.symbol} chain`,
+        });
+        continue;
+      }
+    }
+    const { verdict, reason } = await classifyCoin(
+      client,
+      forkHeight,
+      info.blocks,
+      utxo.txid,
+      options,
+      memo,
+      visits,
+    );
+    if (verdict === 'shared') {
+      quarantined.push({ outpoint, amount: utxo.amount, reason });
+    }
+  }
+  rememberUnique(client.symbol, memo);
+
+  if (quarantined.length > 0) {
+    const rpc = (client as Partial<ChainClient>).rpc;
+    if (rpc === undefined) {
+      throw new ChainIdentityError(
+        `${client.symbol} wallet: cannot lock ${quarantined.length} shared coin(s)`,
+      );
+    }
+    const coins = quarantined.map((q) => {
+      const [txid, vout] = q.outpoint.split(':');
+      return { txid, vout: Number(vout) };
+    });
+    try {
+      await rpc.call(client, 'lockunspent', [false, coins, true]);
+    } catch {
+      // Older nodes have no persistent flag; an in-memory lock still covers
+      // this lockup, and the next check locks the coin again
+      await rpc.call(client, 'lockunspent', [false, coins]);
+    }
+  }
+
+  return { checked: visits.count, quarantined };
 };

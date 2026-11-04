@@ -31,6 +31,8 @@ let forkHeight: number | undefined;
 export const setReplayForkHeight = (height: number | undefined) => {
   forkHeight = height;
 };
+
+export const getReplayForkHeight = (): number | undefined => forkHeight;
 export const isReplayPair = (symbolA: string, symbolB: string): boolean =>
   isBlake2bCurrency(symbolA) !== isBlake2bCurrency(symbolB);
 

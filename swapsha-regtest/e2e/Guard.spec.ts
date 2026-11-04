@@ -15,6 +15,9 @@
  *      replayable deposit that has not been replayed yet. BTC says
  *      missing-inputs, which the first D18 check treated as safe. The
  *      ancestry walk refuses it.
+ *   E. D26 at lockup time: a replayable deposit lands in the running
+ *      backend's own SHA256 wallet. Before its next SHA256 lockup the backend
+ *      locks that coin in the wallet, and the lockup does not spend it.
  *
  * This test runs the backend itself. Any backend already running (run.sh) is
  * killed at the start. Restart run.sh afterwards.
@@ -22,7 +25,9 @@
  * Run from swapsha-backend, chains up:
  *   SWAPSHA_GUARD=1 npx jest --rootDir . swapsha-regtest/e2e/Guard.spec.ts --runInBand
  */
+import fs from 'node:fs';
 import {
+  LOG,
   StartupRefused,
   configWithWallet,
   crash,
@@ -38,8 +43,10 @@ import {
   createSwap,
   ensureUserWallets,
   height,
+  lockUser,
   mine,
   rpc,
+  serverLockup,
   waitFor,
 } from './helpers';
 
@@ -258,5 +265,79 @@ run('D26: provider wallet guard, live', () => {
     await stop();
 
     await drain(SHA, 'guard-user');
+  });
+
+  test('E. D26 at lockup time: a replayable deposit made while running is quarantined, not spent', async () => {
+    const logFrom = fs.existsSync(LOG) ? fs.statSync(LOG).size : 0;
+    await start();
+
+    // Lands after the startup guard ran
+    const deposit = await sendPreForkCoin(
+      SHA,
+      await rpc<string>(SHA, 'getnewaddress', ['', 'bech32'], 'swapsha'),
+      1,
+      BLAKE,
+    );
+    const coin = (
+      await rpc<{ txid: string; vout: number }[]>(
+        SHA,
+        'listunspent',
+        [0],
+        'swapsha',
+      )
+    ).find((u) => u.txid === deposit.txid);
+    expect(coin).toBeDefined();
+
+    // The backend locks SHA256 for a BTC -> SHA256 swap
+    const swap = await createSwap('BTC', 'SHA256');
+    await lockUser(swap);
+    await waitFor(swap.id, 'transaction.server.mempool', BLAKE);
+
+    const locked = await rpc<{ txid: string; vout: number }[]>(
+      SHA,
+      'listlockunspent',
+      [],
+      'swapsha',
+    );
+    expect(locked).toContainEqual({ txid: coin!.txid, vout: coin!.vout });
+
+    const { vin } = await rpc<{ vin: { txid: string }[] }>(
+      SHA,
+      'decoderawtransaction',
+      [(await serverLockup(swap)).hex],
+      '',
+    );
+    const spent = vin.map((i) => i.txid);
+    expect(spent).not.toContain(deposit.txid);
+
+    const logged = fs
+      .readFileSync(LOG)
+      .subarray(logFrom)
+      .toString('utf8')
+      .split('\n')
+      .find((l) =>
+        l.includes(`Quarantined SHA256 provider coin ${coin!.txid}`),
+      );
+    console.log(`quarantine: ${logged?.replace(ANSI, '')}`);
+    expect(logged).toBeDefined();
+    await stop();
+
+    // Clean up: move the quarantined coin back out of the provider wallet
+    await rpc(SHA, 'lockunspent', [true, [coin]], 'swapsha');
+    // sendall, so no change from the tainted coin comes back to swapsha
+    const { hex } = await rpc<{ hex: string }>(
+      SHA,
+      'sendall',
+      [
+        [await rpc<string>(SHA, 'getnewaddress', [], 'prefork')],
+        null,
+        'unset',
+        10,
+        { inputs: [coin], add_to_wallet: false },
+      ],
+      'swapsha',
+    );
+    await rpc(SHA, 'sendrawtransaction', [hex], '');
+    await mine(SHA);
   });
 });
