@@ -162,6 +162,8 @@ message DecodeInvoiceOrOfferRequest {
 
 enum Feature {
   BASIC_MPP = 0;
+  // SwapSha (Blueprint D29, D34): option_blake2b, bit 512 or 513
+  OPTION_BLAKE2B = 1;
 }
 
 message Bolt11Invoice {

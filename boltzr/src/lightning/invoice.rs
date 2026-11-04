@@ -160,6 +160,38 @@ mod test {
         );
     }
 
+    // Minted by Lightning Fork 0.21.6-beta-blake2b.23 on BLAKE2b regtest (Nov 4,
+    // `lncli addinvoice --amt 1000 --memo d34-test`); feature bits 8, 14, 17,
+    // 25 and 512 (option_blake2b)
+    const LIGHTNING_FORK_INVOICE: &str = "lnbcrt10u1p4whgxepp5tv6zsy8t7503z07x5ytnyj6d20vengtfen5uj8wvkcsz4k2qvytsdqdvsengtt5v4ehgcqzzsxqyz5vqsp5caa8y2xcfrsa9mxsshjgtsjv29sg9zkac2jv8l8fmhlx5thfe5kq9r8yqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqpqysgqs003vmku9k5e6ylxgat7hjlvqkqpvpfvhjqlv7rsdzfffa5u6wn5l2n6sn83npkrphc72stm36nw9lxf87grq5gc62ykta85eq8s4sgqn6f9xh";
+
+    #[test]
+    fn test_decode_lightning_fork_invoice() {
+        // SwapSha (Blueprint D34): bit 512 no longer makes the invoice invalid
+        let decoded = decode(wallet::Network::Regtest, LIGHTNING_FORK_INVOICE).unwrap();
+        match decoded {
+            Invoice::Bolt11(invoice) => {
+                let features = invoice.features().unwrap();
+                assert!(lightning_invoice::has_option_blake2b(features));
+                assert!(features.supports_payment_secret());
+                assert_eq!(invoice.amount_milli_satoshis(), Some(1_000_000));
+            }
+            _ => panic!("not a BOLT11 invoice"),
+        }
+    }
+
+    #[test]
+    fn test_stock_invoice_has_no_option_blake2b() {
+        match decode(wallet::Network::Regtest, BOLT11_INVOICE).unwrap() {
+            Invoice::Bolt11(invoice) => {
+                assert!(!lightning_invoice::has_option_blake2b(
+                    invoice.features().unwrap()
+                ));
+            }
+            _ => panic!("not a BOLT11 invoice"),
+        }
+    }
+
     #[test]
     fn test_decode_amp_invoice() {
         let invoice = "lnbc10n1pnhs4wjpp5w09tfff6a4l4dqvy40rr284l3uxccadgnzkep4fh2v4cs9yracmsdqqcqzzsxq9z0rgqsp52vckh4k525a2vlkdy77w7c5940t9lfj34ythh8s9ckmdx3q2zfpq9q8pqqqsgqv07zpwlccsq23ry8ptzqjy5vwcatgg0y6490y5udkzcpgjhmr449hqpdxapjnsu3vucnav040sqg5a9rg5cxp5y4e50mhh8keluhf2spwyry73";

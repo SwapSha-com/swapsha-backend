@@ -31,7 +31,7 @@ use futures::StreamExt;
 use lightning::blinded_path::IntroductionNode;
 use lightning::offers::offer::Amount;
 use lightning::util::ser::Writeable;
-use lightning_invoice::Bolt11InvoiceDescriptionRef;
+use lightning_invoice::{Bolt11InvoiceDescriptionRef, has_option_blake2b};
 use std::cell::Cell;
 use std::net::IpAddr;
 use std::pin::Pin;
@@ -570,11 +570,15 @@ where
                                 .collect(),
                             features: match invoice.features() {
                                 Some(features) => {
+                                    let mut list = Vec::new();
                                     if features.supports_basic_mpp() {
-                                        vec![Feature::BasicMpp.into()]
-                                    } else {
-                                        Vec::new()
+                                        list.push(Feature::BasicMpp.into());
                                     }
+                                    // SwapSha (Blueprint D29): which chain the invoice is for
+                                    if has_option_blake2b(features) {
+                                        list.push(Feature::OptionBlake2b.into());
+                                    }
+                                    list
                                 }
                                 None => Vec::new(),
                             },

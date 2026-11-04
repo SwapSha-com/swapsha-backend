@@ -63,6 +63,8 @@ import ScriptPubKeyRepository from '../db/repositories/ScriptPubKeyRepository';
 import SwapRepository from '../db/repositories/SwapRepository';
 import TransactionLabelRepository from '../db/repositories/TransactionLabelRepository';
 import { msatToSat } from '../lightning/ChannelUtils';
+import { checkInvoiceChain } from '../blake2b/LightningIdentity';
+import { isBlake2bCurrency } from '../blake2b/SighashMode';
 import type { HopHint, LightningClient } from '../lightning/LightningClient';
 import type NotificationClient from '../notifications/NotificationClient';
 import type { SwapFees } from '../rates/FeeProvider';
@@ -630,6 +632,12 @@ class SwapManager {
     if (decodedInvoice.type === InvoiceType.Offer) {
       throw Errors.NO_OFFERS_ALLOWED();
     }
+    // SwapSha D29: the invoice must be for the swap's Lightning chain
+    checkInvoiceChain(
+      swap.lightningCurrency,
+      isBlake2bCurrency(swap.lightningCurrency),
+      decodedInvoice.features,
+    );
     const invoiceAmount = msatToSat(decodedInvoice.amountMsat);
 
     if (getHexString(decodedInvoice.paymentHash!) !== swap.preimageHash) {

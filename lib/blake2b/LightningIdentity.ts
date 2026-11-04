@@ -1,3 +1,4 @@
+import { InvoiceFeature } from '../lightning/LightningClient';
 import { ChainIdentityError } from './ChainIdentity';
 
 /** option_blake2b (Lightning Fork docs/blake2b-chain-identity.md). */
@@ -46,4 +47,29 @@ export const verifyLightningIdentity = (
   return isBlake2b
     ? `${symbol} LND: Lightning Fork on the BLAKE2b chain (option_blake2b), no simple taproot channels`
     : `${symbol} LND: not Lightning Fork (no option_blake2b)`;
+};
+
+/**
+ * SwapSha D29: an invoice for a BLAKE2b (BTC) Lightning leg must set
+ * option_blake2b, and one for a SHA-256 Lightning leg must not. Both chains
+ * use the lnbcrt/lnbc prefix and the same chain_hash, so the bit is the only
+ * marker. Throws before anything is locked.
+ */
+export const checkInvoiceChain = (
+  symbol: string,
+  isBlake2b: boolean,
+  features: Set<InvoiceFeature> | undefined,
+): void => {
+  // No feature list counts as no option_blake2b (fail closed for BTC legs)
+  const blake2b = features?.has(InvoiceFeature.OptionBlake2b) === true;
+  if (isBlake2b && !blake2b) {
+    throw new Error(
+      `invoice is not for the ${symbol} (BLAKE2b) Lightning network: it does not set option_blake2b (feature bit 512 or 513)`,
+    );
+  }
+  if (!isBlake2b && blake2b) {
+    throw new Error(
+      `invoice is for the BLAKE2b Lightning network, not ${symbol}: it sets option_blake2b (feature bit 512 or 513)`,
+    );
+  }
 };

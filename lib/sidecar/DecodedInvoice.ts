@@ -128,6 +128,9 @@ class DecodedInvoice {
       if (feature === Feature.BASIC_MPP) {
         features.add(InvoiceFeature.MPP);
       }
+      if (feature === Feature.OPTION_BLAKE2B) {
+        features.add(InvoiceFeature.OptionBlake2b);
+      }
     }
 
     return features;

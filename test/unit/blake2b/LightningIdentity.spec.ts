@@ -1,5 +1,9 @@
 import { ChainIdentityError } from '../../../lib/blake2b/ChainIdentity';
-import { verifyLightningIdentity } from '../../../lib/blake2b/LightningIdentity';
+import {
+  checkInvoiceChain,
+  verifyLightningIdentity,
+} from '../../../lib/blake2b/LightningIdentity';
+import { InvoiceFeature } from '../../../lib/lightning/LightningClient';
 
 // Example feature sets: common lnd bits, plus 512 (option_blake2b) and 514
 // (option_unified_sigs) on Lightning Fork
@@ -48,4 +52,29 @@ describe('verifyLightningIdentity (D23, D29, D32)', () => {
       ).toThrow(/simple taproot channels/);
     },
   );
+});
+
+describe('checkInvoiceChain (D29)', () => {
+  const fork = new Set([InvoiceFeature.MPP, InvoiceFeature.OptionBlake2b]);
+  const stock = new Set([InvoiceFeature.MPP]);
+
+  test('accepts a Lightning Fork invoice for the BTC leg', () => {
+    expect(() => checkInvoiceChain('BTC', true, fork)).not.toThrow();
+  });
+
+  test('refuses an invoice without option_blake2b for the BTC leg', () => {
+    expect(() => checkInvoiceChain('BTC', true, stock)).toThrow(
+      /does not set option_blake2b/,
+    );
+  });
+
+  test('accepts a stock invoice for the SHA256 leg', () => {
+    expect(() => checkInvoiceChain('SHA256', false, stock)).not.toThrow();
+  });
+
+  test('refuses a Lightning Fork invoice for the SHA256 leg', () => {
+    expect(() => checkInvoiceChain('SHA256', false, fork)).toThrow(
+      /for the BLAKE2b Lightning network/,
+    );
+  });
 });

@@ -11,6 +11,12 @@ members = [
 ]
 exclude = ["hold"]
 
+# SwapSha (Blueprint D34): lightning-invoice with option_blake2b (bits 512/513)
+# counted as known, so Lightning Fork invoices decode. See the crate's
+# check_feature_bits and without_option_blake2b.
+[patch.crates-io]
+lightning-invoice = { path = "boltzr/vendor/lightning-invoice-0.34.1" }
+
 [workspace.package]
 version = "3.13.0"
 license = "AGPL-3.0-only"

@@ -67,6 +67,8 @@ type Invoice = {
 enum InvoiceFeature {
   MPP,
   AMP,
+  // SwapSha (Blueprint D29): option_blake2b, the invoice is for the BLAKE2b chain
+  OptionBlake2b,
 }
 
 type DecodedInvoice = {
