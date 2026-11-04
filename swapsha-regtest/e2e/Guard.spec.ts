@@ -278,66 +278,102 @@ run('D26: provider wallet guard, live', () => {
       1,
       BLAKE,
     );
-    const coin = (
-      await rpc<{ txid: string; vout: number }[]>(
+
+    // Cleanup runs even when an assertion fails: otherwise the tainted coin
+    // stays in the provider wallet and the next run refuses to start
+    try {
+      const coin = (
+        await rpc<{ txid: string; vout: number }[]>(
+          SHA,
+          'listunspent',
+          [0],
+          'swapsha',
+        )
+      ).find((u) => u.txid === deposit.txid);
+      expect(coin).toBeDefined();
+
+      // The backend locks SHA256 for a BTC -> SHA256 swap
+      const swap = await createSwap('BTC', 'SHA256');
+      await lockUser(swap);
+      await waitFor(swap.id, 'transaction.server.mempool', BLAKE);
+
+      const locked = await rpc<{ txid: string; vout: number }[]>(
         SHA,
-        'listunspent',
-        [0],
+        'listlockunspent',
+        [],
         'swapsha',
-      )
-    ).find((u) => u.txid === deposit.txid);
-    expect(coin).toBeDefined();
+      );
+      expect(locked).toContainEqual({ txid: coin!.txid, vout: coin!.vout });
 
-    // The backend locks SHA256 for a BTC -> SHA256 swap
-    const swap = await createSwap('BTC', 'SHA256');
-    await lockUser(swap);
-    await waitFor(swap.id, 'transaction.server.mempool', BLAKE);
+      const { vin } = await rpc<{ vin: { txid: string }[] }>(
+        SHA,
+        'decoderawtransaction',
+        [(await serverLockup(swap)).hex],
+        '',
+      );
+      const spent = vin.map((i) => i.txid);
+      expect(spent).not.toContain(deposit.txid);
 
-    const locked = await rpc<{ txid: string; vout: number }[]>(
+      const logged = fs
+        .readFileSync(LOG)
+        .subarray(logFrom)
+        .toString('utf8')
+        .split('\n')
+        .find((l) =>
+          l.includes(`Quarantined SHA256 provider coin ${coin!.txid}`),
+        );
+      console.log(`quarantine: ${logged?.replace(ANSI, '')}`);
+      expect(logged).toBeDefined();
+    } finally {
+      await stop();
+      await removeFromProviderWallet(deposit.txid);
+    }
+  });
+});
+
+/**
+ * Move every output of `txid` that is still in the SHA256 provider wallet
+ * (locked or not) to the prefork wallet, with sendall so no change from the
+ * tainted coin comes back to swapsha.
+ */
+const removeFromProviderWallet = async (txid: string) => {
+  const locked = (
+    await rpc<{ txid: string; vout: number }[]>(
       SHA,
       'listlockunspent',
       [],
       'swapsha',
-    );
-    expect(locked).toContainEqual({ txid: coin!.txid, vout: coin!.vout });
+    )
+  ).filter((u) => u.txid === txid);
+  if (locked.length > 0) {
+    await rpc(SHA, 'lockunspent', [true, locked], 'swapsha');
+  }
 
-    const { vin } = await rpc<{ vin: { txid: string }[] }>(
+  const coins = (
+    await rpc<{ txid: string; vout: number }[]>(
       SHA,
-      'decoderawtransaction',
-      [(await serverLockup(swap)).hex],
-      '',
-    );
-    const spent = vin.map((i) => i.txid);
-    expect(spent).not.toContain(deposit.txid);
-
-    const logged = fs
-      .readFileSync(LOG)
-      .subarray(logFrom)
-      .toString('utf8')
-      .split('\n')
-      .find((l) =>
-        l.includes(`Quarantined SHA256 provider coin ${coin!.txid}`),
-      );
-    console.log(`quarantine: ${logged?.replace(ANSI, '')}`);
-    expect(logged).toBeDefined();
-    await stop();
-
-    // Clean up: move the quarantined coin back out of the provider wallet
-    await rpc(SHA, 'lockunspent', [true, [coin]], 'swapsha');
-    // sendall, so no change from the tainted coin comes back to swapsha
-    const { hex } = await rpc<{ hex: string }>(
-      SHA,
-      'sendall',
-      [
-        [await rpc<string>(SHA, 'getnewaddress', [], 'prefork')],
-        null,
-        'unset',
-        10,
-        { inputs: [coin], add_to_wallet: false },
-      ],
+      'listunspent',
+      [0],
       'swapsha',
-    );
-    await rpc(SHA, 'sendrawtransaction', [hex], '');
-    await mine(SHA);
-  });
-});
+    )
+  )
+    .filter((u) => u.txid === txid)
+    .map(({ txid: t, vout }) => ({ txid: t, vout }));
+  if (coins.length === 0) return;
+
+  const { hex } = await rpc<{ hex: string }>(
+    SHA,
+    'sendall',
+    [
+      [await rpc<string>(SHA, 'getnewaddress', [], 'prefork')],
+      null,
+      'unset',
+      10,
+      { inputs: coins, add_to_wallet: false },
+    ],
+    'swapsha',
+  );
+  await rpc(SHA, 'sendrawtransaction', [hex], '');
+  await mine(SHA);
+  console.log(`cleanup: moved ${coins.length} coin(s) of ${txid} to prefork`);
+};
