@@ -119,6 +119,14 @@ class ChainClient extends BaseClient implements IChainClient {
   public rpc = <T>(method: string, params?: unknown[]): Promise<T> =>
     this.client.request<T>(method, params as any[]);
 
+  /**
+   * Raw wallet RPC call, sent to /wallet/<name>. Needed for wallet methods
+   * such as lockunspent: a node with several wallets loaded refuses them on
+   * the node path.
+   */
+  public walletRpc = <T>(method: string, params?: unknown[]): Promise<T> =>
+    this.client.request<T>(method, params as any[], true);
+
   public getBlockhash = (height: number): Promise<string> => {
     return this.client.request<string>('getblockhash', [height]);
   };

@@ -16,7 +16,11 @@ type FakeTx = { height?: number; coinbase?: boolean; parents?: string[] };
 const wallet = (
   txs: Record<string, FakeTx>,
   utxos: string[],
-  opts: { failLookup?: boolean; noPersistentLock?: boolean } = {},
+  opts: {
+    failLookup?: boolean;
+    noPersistentLock?: boolean;
+    failLock?: boolean;
+  } = {},
 ) => {
   const locks: unknown[][] = [];
   const client = {
@@ -44,15 +48,26 @@ const wallet = (
             })),
       };
     }),
-    rpc: jest.fn(async (method: string, params: unknown[]) => {
+    // Like a node with several wallets loaded: wallet methods are refused on
+    // the node path and only work on /wallet/<name>
+    rpc: jest.fn(async (method: string) => {
       if (method === 'lockunspent') {
+        throw new Error(
+          'Multiple wallets are loaded. Please select which wallet to use by requesting the RPC through the /wallet/<walletname> URI path.',
+        );
+      }
+      throw 'no result in RPC response';
+    }),
+    walletRpc: jest.fn(async (method: string, params: unknown[]) => {
+      if (method === 'lockunspent') {
+        if (opts.failLock) throw new Error('Wallet is locked');
         if (opts.noPersistentLock && params.length === 3) {
           throw new Error('too many arguments');
         }
         locks.push(params);
         return true;
       }
-      throw 'no result in RPC response';
+      throw new Error(`unexpected wallet RPC ${method}`);
     }),
   } as unknown as IChainClient;
   return { client, locks };
@@ -148,5 +163,24 @@ describe('quarantineSharedCoins (D26 at lockup time)', () => {
       quarantineSharedCoins(client, other(), FORK, { isBlake2b: false }),
     ).rejects.toThrow(/txindex/);
     expect(locks).toEqual([]);
+  });
+
+  test('sends lockunspent to the wallet path, not the node path', async () => {
+    const { client, locks } = wallet(TXS, ['deposit']);
+    await quarantineSharedCoins(client, other(), FORK, { isBlake2b: false });
+    expect(locks).toHaveLength(1);
+    const nodeCalls = (
+      client as unknown as { rpc: jest.Mock }
+    ).rpc.mock.calls.map((c) => c[0]);
+    expect(nodeCalls).not.toContain('lockunspent');
+  });
+
+  test('fails closed with both errors when the coin cannot be locked', async () => {
+    const { client } = wallet(TXS, ['deposit'], { failLock: true });
+    await expect(
+      quarantineSharedCoins(client, other(), FORK, { isBlake2b: false }),
+    ).rejects.toThrow(
+      /lockunspent failed: Wallet is locked; without the persistent flag: Wallet is locked/,
+    );
   });
 });

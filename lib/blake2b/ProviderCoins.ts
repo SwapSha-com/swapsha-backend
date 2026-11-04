@@ -497,8 +497,10 @@ export const quarantineSharedCoins = async (
   rememberUnique(client.symbol, memo);
 
   if (quarantined.length > 0) {
-    const rpc = (client as Partial<ChainClient>).rpc;
-    if (rpc === undefined) {
+    // lockunspent is a wallet method: it must go to /wallet/<name>, because
+    // a node with several wallets loaded refuses it on the node path
+    const walletRpc = (client as Partial<ChainClient>).walletRpc;
+    if (walletRpc === undefined) {
       throw new ChainIdentityError(
         `${client.symbol} wallet: cannot lock ${quarantined.length} shared coin(s)`,
       );
@@ -508,11 +510,17 @@ export const quarantineSharedCoins = async (
       return { txid, vout: Number(vout) };
     });
     try {
-      await rpc.call(client, 'lockunspent', [false, coins, true]);
-    } catch {
+      await walletRpc.call(client, 'lockunspent', [false, coins, true]);
+    } catch (persistentError) {
       // Older nodes have no persistent flag; an in-memory lock still covers
       // this lockup, and the next check locks the coin again
-      await rpc.call(client, 'lockunspent', [false, coins]);
+      try {
+        await walletRpc.call(client, 'lockunspent', [false, coins]);
+      } catch (error) {
+        throw new ChainIdentityError(
+          `${client.symbol} wallet: lockunspent failed: ${errorText(persistentError)}; without the persistent flag: ${errorText(error)}`,
+        );
+      }
     }
   }
 
