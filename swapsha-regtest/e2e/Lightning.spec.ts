@@ -17,9 +17,17 @@
  *
  * Run from swapsha-backend:
  *   npx jest --rootDir . swapsha-regtest/e2e/Lightning.spec.ts --runInBand
+ *
+ * On testnet4 (L5: nodes from swapsha_testnet4.sh, Lightning Fork nodes from
+ * swapsha_ln_testnet4.sh with a confirmed channel, backend from
+ * ./swapsha-testnet4/run.sh), the same tests wait for real blocks:
+ *   SWAPSHA_NET=testnet4 npx jest --rootDir . swapsha-regtest/e2e/Lightning.spec.ts --runInBand
+ * The type 1 refund is skipped there: its timeout is about 1,060 Spamcoin
+ * blocks (a week) once the testnet4 pace bounds apply (D30).
  */
 import {
   BLAKE,
+  LIVE,
   SHA,
   TEST_TIMEOUT,
   accept,
@@ -88,26 +96,29 @@ describe('L4: Lightning swaps between Spamcoin (SHA256) and BTC Lightning (Light
     await mine(SHA);
   });
 
-  test('type 1: user refunds an underpaid SHA256 lockup after the timeout; invoice not paid', async () => {
-    const { invoice, paymentHash } = await userInvoice(100_000);
-    const swap = await createSubmarine(invoice);
-    const userLock = await lockUser(swap, swap.lockupDetails.amount - 20_000);
-    await waitFor(swap.id, 'transaction.lockupFailed', SHA, [
-      'transaction.lockupFailed',
-    ]);
-    const info = await api<{ failureReason?: string }>(`/swap/${swap.id}`);
-    console.log(`lockup refused: ${info.failureReason}`);
-    expect(await invoiceState('user', paymentHash)).toBe('OPEN');
+  (LIVE ? test.skip : test)(
+    'type 1: user refunds an underpaid SHA256 lockup after the timeout; invoice not paid',
+    async () => {
+      const { invoice, paymentHash } = await userInvoice(100_000);
+      const swap = await createSubmarine(invoice);
+      const userLock = await lockUser(swap, swap.lockupDetails.amount - 20_000);
+      await waitFor(swap.id, 'transaction.lockupFailed', SHA, [
+        'transaction.lockupFailed',
+      ]);
+      const info = await api<{ failureReason?: string }>(`/swap/${swap.id}`);
+      console.log(`lockup refused: ${info.failureReason}`);
+      expect(await invoiceState('user', paymentHash)).toBe('OPEN');
 
-    await mineTo(SHA, swap.lockupDetails.timeoutBlockHeight);
-    const refund = await userRefund(swap, userLock);
-    expect(await accept(SHA, refund.hex)).toMatchObject({ allowed: true });
-    console.log(
-      `user SHA256 refund: ${await rpc(SHA, 'sendrawtransaction', [refund.hex], '')}`,
-    );
-    await mine(SHA);
-    expect(await invoiceState('user', paymentHash)).toBe('OPEN');
-  });
+      await mineTo(SHA, swap.lockupDetails.timeoutBlockHeight);
+      const refund = await userRefund(swap, userLock);
+      expect(await accept(SHA, refund.hex)).toMatchObject({ allowed: true });
+      console.log(
+        `user SHA256 refund: ${await rpc(SHA, 'sendrawtransaction', [refund.hex], '')}`,
+      );
+      await mine(SHA);
+      expect(await invoiceState('user', paymentHash)).toBe('OPEN');
+    },
+  );
 
   test('type 2: BTC Lightning -> SHA256 on chain completes and the hold invoice settles', async () => {
     const swap = await createReverse();

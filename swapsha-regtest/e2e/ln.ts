@@ -13,9 +13,20 @@ import { hex } from '@scure/base';
 import bolt11 from 'bolt11';
 import { type ChildProcess, execFile, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { type CreatedSwap, type SwapData, api, height, rpc } from './helpers';
+import {
+  type CreatedSwap,
+  LIVE,
+  type SwapData,
+  api,
+  height,
+  rpc,
+} from './helpers';
 
-const SCRIPT = process.env.SWAPSHA_LN ?? '../lightning/swapsha_ln_regtest.sh';
+const SCRIPT =
+  process.env.SWAPSHA_LN ??
+  (LIVE
+    ? '../lightning/swapsha_ln_testnet4.sh'
+    : '../lightning/swapsha_ln_regtest.sh');
 
 export type Node = 'prov' | 'user';
 
@@ -132,15 +143,16 @@ export const tipAge = async (nodePort: number) => {
   return Math.floor(Date.now() / 1000) - time;
 };
 
-const REGTEST = {
-  bech32: 'bcrt',
+// lnbcrt on regtest, lntb on testnet4
+const NETWORK = {
+  bech32: LIVE ? 'tb' : 'bcrt',
   pubKeyHash: 0x6f,
   scriptHash: 0xc4,
   validWitnessVersions: [0, 1],
 };
 
 /**
- * A validly signed regtest invoice from a random node that looks like a
+ * A validly signed regtest (or testnet4) invoice from a random node that looks like a
  * stock lnd one: features 8, 14 and 17, and no option_blake2b. That is what
  * an invoice from the SHA-256 (Spamcoin) Lightning network looks like, since
  * both networks use the same prefix and chain hash. With `withBlake2b` it
@@ -160,7 +172,7 @@ export const craftedInvoice = (sats: number, withBlake2b = false) => {
     featureBits.extra_bits = { start_bit: 20, bits, has_required: true };
   }
   const encoded = bolt11.encode({
-    network: REGTEST,
+    network: NETWORK,
     satoshis: sats,
     timestamp: Math.floor(Date.now() / 1000),
     payeeNodeKey: hex.encode(secp256k1.getPublicKey(key, true)),
