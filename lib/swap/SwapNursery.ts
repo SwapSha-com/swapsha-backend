@@ -1915,14 +1915,19 @@ class SwapNursery extends TypedEventEmitter<SwapNurseryEvents> {
     const lightningClient = resolved.lightningClient;
 
     // SwapSha D30 stall guard: do not lock on chain while either chain's tip
-    // is stale; the user's hold invoice payment is given back at its expiry
+    // is stale. Cancel the hold invoice at once, so the user's payment comes
+    // back now instead of when its HTLC nears expiry on a stalled chain.
     const stale = await staleChainReason([
       chainCurrency.chainClient,
       this.currencies.get(lightningSymbol)?.chainClient,
     ]);
     if (stale !== undefined) {
-      this.logger.warn(
-        `Skipping lockup of Reverse Swap ${reverseSwap.id}: ${stale}`,
+      await this.handleSwapSendFailed(
+        reverseSwap,
+        chainSymbol,
+        stale,
+        lightningClient,
+        stale,
       );
       return;
     }
@@ -2450,6 +2455,8 @@ class SwapNursery extends TypedEventEmitter<SwapNurseryEvents> {
     chainSymbol: string,
     error: unknown,
     lightningClient?: LightningClient,
+    // SwapSha: a reason for the user instead of the generic one
+    failureReason?: string,
   ) => {
     if (lightningClient !== undefined) {
       try {
@@ -2477,7 +2484,7 @@ class SwapNursery extends TypedEventEmitter<SwapNurseryEvents> {
       await WrappedSwapRepository.setStatus(
         swap,
         SwapUpdateEvent.TransactionFailed,
-        Errors.COINS_COULD_NOT_BE_SENT().message,
+        failureReason ?? Errors.COINS_COULD_NOT_BE_SENT().message,
       ),
     );
   };

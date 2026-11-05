@@ -101,6 +101,37 @@ export const configWithWallet = (symbol: 'SHA256' | 'BTC', wallet: string) => {
 };
 
 /**
+ * A copy of boltz.conf with D30 pace bounds on one currency, for the stall
+ * guard test. Inserted as an inline table right after the symbol line, so it
+ * stays inside that currency's table.
+ */
+export const configWithPace = (
+  symbol: 'SHA256' | 'BTC',
+  pace: {
+    fastMinutesPerBlock: number;
+    slowMinutesPerBlock: number;
+    maxTipAgeMinutes?: number;
+  },
+) => {
+  const base = fs.readFileSync(`${DATA}/boltz.conf`, 'utf8');
+  const line = `symbol = "${symbol}"`;
+  if (!base.includes(line)) throw new Error(`no ${symbol} currency in boltz.conf`);
+  const fields = Object.entries(pace)
+    .filter(([, v]) => v !== undefined)
+    .map(([k, v]) => `${k} = ${v}`)
+    .join(', ');
+  const path = `${DATA}/pace-${symbol}.conf`;
+  fs.writeFileSync(path, base.replace(line, `${line}\npace = { ${fields} }`));
+  return path;
+};
+
+/** Copy the checked-in boltz.conf into the data dir, as run.sh does. */
+export const freshConfig = () => {
+  const src = LIVE ? 'swapsha-testnet4/boltz.conf' : 'swapsha-regtest/boltz.conf';
+  fs.copyFileSync(src, `${DATA}/boltz.conf`);
+};
+
+/**
  * Start boltzd (which starts the sidecar) and wait until the API answers.
  * Throws StartupRefused if it exits first.
  */
