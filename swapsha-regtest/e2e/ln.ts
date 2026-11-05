@@ -28,7 +28,11 @@ export const lncli = <T>(node: Node, ...args: string[]): Promise<T> =>
       { maxBuffer: 16 * 1024 * 1024 },
       (error, stdout, stderr) => {
         if (error) {
-          reject(new Error(`lncli ${node} ${args[0]}: ${stderr || stdout || error.message}`));
+          reject(
+            new Error(
+              `lncli ${node} ${args[0]}: ${stderr || stdout || error.message}`,
+            ),
+          );
           return;
         }
         resolve(JSON.parse(stdout) as T);
@@ -52,13 +56,19 @@ export const userInvoice = async (sats: number) => {
 export type InvoiceState = 'OPEN' | 'SETTLED' | 'CANCELED' | 'ACCEPTED';
 
 export const invoiceState = async (node: Node, paymentHash: string) =>
-  (await lncli<{ state: InvoiceState }>(node, 'lookupinvoice', paymentHash)).state;
+  (await lncli<{ state: InvoiceState }>(node, 'lookupinvoice', paymentHash))
+    .state;
 
 /** Feature bit numbers an invoice sets, as the user's Lightning Fork node reads them. */
 export const invoiceFeatures = async (invoice: string) =>
   Object.keys(
-    (await lncli<{ features: Record<string, unknown> }>('user', 'decodepayreq', invoice))
-      .features,
+    (
+      await lncli<{ features: Record<string, unknown> }>(
+        'user',
+        'decodepayreq',
+        invoice,
+      )
+    ).features,
   ).map(Number);
 
 export type Payment = { process: ChildProcess; result: Promise<string> };
@@ -68,6 +78,14 @@ export type Payment = { process: ChildProcess; result: Promise<string> };
  * running until SwapSha settles or cancels it. `result` resolves to the
  * payment's final status (SUCCEEDED or FAILED) with lncli's output.
  */
+const running = new Set<ChildProcess>();
+
+/** Stop any lncli payment still waiting, so Jest can exit after a failure. */
+export const stopPayments = () => {
+  for (const child of running) child.kill();
+  running.clear();
+};
+
 export const payAsync = (invoice: string): Payment => {
   const child = spawn(SCRIPT, [
     'cli',
@@ -79,12 +97,16 @@ export const payAsync = (invoice: string): Payment => {
     '1200s',
     invoice,
   ]);
+  running.add(child);
   let out = '';
   child.stdout.on('data', (d) => (out += d));
   child.stderr.on('data', (d) => (out += d));
   const result = new Promise<string>((resolve) => {
     child.on('close', () => {
-      const statuses = [...out.matchAll(/"status":\s*"([A-Z_]+)"/g)].map((m) => m[1]);
+      running.delete(child);
+      const statuses = [...out.matchAll(/"status":\s*"([A-Z_]+)"/g)].map(
+        (m) => m[1],
+      );
       const final = statuses[statuses.length - 1] ?? 'FAILED';
       console.log(`user payment finished: ${final}`);
       resolve(`${final}\n${out}`);
@@ -95,8 +117,18 @@ export const payAsync = (invoice: string): Payment => {
 
 /** Seconds since the tip block of `nodePort` was made. */
 export const tipAge = async (nodePort: number) => {
-  const hash = await rpc<string>(nodePort, 'getblockhash', [await height(nodePort)], '');
-  const { time } = await rpc<{ time: number }>(nodePort, 'getblockheader', [hash], '');
+  const hash = await rpc<string>(
+    nodePort,
+    'getblockhash',
+    [await height(nodePort)],
+    '',
+  );
+  const { time } = await rpc<{ time: number }>(
+    nodePort,
+    'getblockheader',
+    [hash],
+    '',
+  );
   return Math.floor(Date.now() / 1000) - time;
 };
 
@@ -158,9 +190,14 @@ type SubmarineResponse = {
  * Type 1: Spamcoin on chain to a BTC Lightning invoice. Returned in the
  * CreatedSwap shape so lockUser and userRefund from helpers.ts work on it.
  */
-export const createSubmarine = async (invoice: string): Promise<CreatedSwap> => {
+export const createSubmarine = async (
+  invoice: string,
+): Promise<CreatedSwap> => {
   const refundKey = secp256k1.utils.randomSecretKey();
-  const pairs = await api<Record<string, Record<string, { hash: string }>>>('/swap/submarine');
+  const pairs =
+    await api<Record<string, Record<string, { hash: string }>>>(
+      '/swap/submarine',
+    );
   const res = await api<SubmarineResponse>('/swap/submarine', {
     from: 'SHA256',
     to: 'BTC',
@@ -200,7 +237,10 @@ type ReverseResponse = {
   swapTree: SwapData['swapTree'];
 };
 
-export type ReverseSwap = CreatedSwap & { invoice: string; paymentHash: string };
+export type ReverseSwap = CreatedSwap & {
+  invoice: string;
+  paymentHash: string;
+};
 
 /**
  * Type 2: the user pays a BTC Lightning hold invoice and claims Spamcoin on
@@ -213,7 +253,10 @@ export const createReverse = async (
   const claimKey = secp256k1.utils.randomSecretKey();
   const preimage = randomBytes(32);
   const paymentHash = hex.encode(sha256(preimage));
-  const pairs = await api<Record<string, Record<string, { hash: string }>>>('/swap/reverse');
+  const pairs =
+    await api<Record<string, Record<string, { hash: string }>>>(
+      '/swap/reverse',
+    );
   const res = await api<ReverseResponse>('/swap/reverse', {
     from: 'BTC',
     to: 'SHA256',

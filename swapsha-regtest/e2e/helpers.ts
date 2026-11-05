@@ -508,11 +508,14 @@ export const acceptWhenFinal = async (nodePort: number, raw: string) => {
 
 /**
  * Assert a transaction from the other chain is not valid on `nodePort`.
- * regtest: the reason must be missing inputs. testnet4: the BLAKE2b chain
- * runs thousands of blocks behind SHA-256, so a SHA-256 transaction whose
- * nLockTime is the SHA-256 tip stays non-final there for weeks and nothing can
- * be mined to get past it. Then non-final is accepted and logged; that the
- * coins exist on one chain only is what the D26 startup guard proved.
+ * The node can answer non-final before it looks at the inputs: the Knots
+ * wallet sets nLockTime to its own chain's tip, and the two chains run at
+ * different heights (on testnet4 BLAKE2b is thousands of blocks behind; on
+ * regtest the Lightning suites mine only SHA256, and mining BLAKE2b to catch
+ * up would move the Lightning HTLCs too). Then every input must be absent
+ * from that chain's UTXO set and mempool, which is what missing-inputs would
+ * have said. That the coins exist on one chain only is what the D26 startup
+ * guard proved.
  */
 export const expectInvalidOn = async (nodePort: number, raw: string) => {
   const result = await accept(nodePort, raw);
@@ -521,7 +524,25 @@ export const expectInvalidOn = async (nodePort: number, raw: string) => {
   );
   expect(result.allowed).toBe(false);
   expect(result['reject-reason']).toMatch(
-    LIVE ? /missing-inputs|non-final|script-verify/ : /missing-inputs/,
+    LIVE
+      ? /missing-inputs|non-final|script-verify/
+      : /missing-inputs|non-final/,
   );
+  if (result['reject-reason'] === 'non-final') {
+    const tx = parseTx(raw);
+    for (let i = 0; i < tx.inputsLength; i++) {
+      const input = tx.getInput(i);
+      const coin = await rpc<unknown>(
+        nodePort,
+        'gettxout',
+        [hex.encode(input.txid!), input.index!, true],
+        '',
+      );
+      expect(coin).toBeNull();
+    }
+    console.log(
+      `on ${chainName(nodePort)}: none of the ${tx.inputsLength} input(s) exist there`,
+    );
+  }
   return result;
 };

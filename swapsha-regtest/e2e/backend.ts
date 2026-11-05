@@ -115,7 +115,8 @@ export const configWithPace = (
 ) => {
   const base = fs.readFileSync(`${DATA}/boltz.conf`, 'utf8');
   const line = `symbol = "${symbol}"`;
-  if (!base.includes(line)) throw new Error(`no ${symbol} currency in boltz.conf`);
+  if (!base.includes(line))
+    throw new Error(`no ${symbol} currency in boltz.conf`);
   const fields = Object.entries(pace)
     .filter(([, v]) => v !== undefined)
     .map(([k, v]) => `${k} = ${v}`)
@@ -127,7 +128,9 @@ export const configWithPace = (
 
 /** Copy the checked-in boltz.conf into the data dir, as run.sh does. */
 export const freshConfig = () => {
-  const src = LIVE ? 'swapsha-testnet4/boltz.conf' : 'swapsha-regtest/boltz.conf';
+  const src = LIVE
+    ? 'swapsha-testnet4/boltz.conf'
+    : 'swapsha-regtest/boltz.conf';
   fs.copyFileSync(src, `${DATA}/boltz.conf`);
 };
 

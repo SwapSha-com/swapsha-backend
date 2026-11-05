@@ -47,6 +47,7 @@ import {
   invoiceState,
   payAsync,
   reverseLockup,
+  stopPayments,
   userInvoice,
 } from './ln';
 
@@ -58,13 +59,16 @@ const waitTimer = async (id: string, want: string, seconds: number) => {
     if ((await status(id)) === want) return;
     await sleep(5000);
   }
-  throw new Error(`swap ${id} at ${await status(id)} after ${seconds}s, wanted ${want}`);
+  throw new Error(
+    `swap ${id} at ${await status(id)} after ${seconds}s, wanted ${want}`,
+  );
 };
 
 describe('L4: Lightning swaps between Spamcoin (SHA256) and BTC Lightning (Lightning Fork)', () => {
   jest.setTimeout(TEST_TIMEOUT);
 
   beforeAll(ensureUserWallets);
+  afterAll(stopPayments);
 
   test('type 1: SHA256 on chain -> BTC Lightning completes', async () => {
     const { invoice, paymentHash } = await userInvoice(100_000);
@@ -76,7 +80,9 @@ describe('L4: Lightning swaps between Spamcoin (SHA256) and BTC Lightning (Light
 
     expect(await invoiceState('user', paymentHash)).toBe('SETTLED');
     const serverClaim = parseTx(await findSpend(SHA, userLock));
-    console.log(`server SHA256 claim ${serverClaim.id}: ${describeSigs(serverClaim)}`);
+    console.log(
+      `server SHA256 claim ${serverClaim.id}: ${describeSigs(serverClaim)}`,
+    );
     // Spends coins that exist on the SHA-256 chain only
     await expectInvalidOn(BLAKE, serverClaim.hex);
     await mine(SHA);
@@ -86,7 +92,9 @@ describe('L4: Lightning swaps between Spamcoin (SHA256) and BTC Lightning (Light
     const { invoice, paymentHash } = await userInvoice(100_000);
     const swap = await createSubmarine(invoice);
     const userLock = await lockUser(swap, swap.lockupDetails.amount - 20_000);
-    await waitFor(swap.id, 'transaction.lockupFailed', SHA, ['transaction.lockupFailed']);
+    await waitFor(swap.id, 'transaction.lockupFailed', SHA, [
+      'transaction.lockupFailed',
+    ]);
     const info = await api<{ failureReason?: string }>(`/swap/${swap.id}`);
     console.log(`lockup refused: ${info.failureReason}`);
     expect(await invoiceState('user', paymentHash)).toBe('OPEN');
@@ -94,7 +102,9 @@ describe('L4: Lightning swaps between Spamcoin (SHA256) and BTC Lightning (Light
     await mineTo(SHA, swap.lockupDetails.timeoutBlockHeight);
     const refund = await userRefund(swap, userLock);
     expect(await accept(SHA, refund.hex)).toMatchObject({ allowed: true });
-    console.log(`user SHA256 refund: ${await rpc(SHA, 'sendrawtransaction', [refund.hex], '')}`);
+    console.log(
+      `user SHA256 refund: ${await rpc(SHA, 'sendrawtransaction', [refund.hex], '')}`,
+    );
     await mine(SHA);
     expect(await invoiceState('user', paymentHash)).toBe('OPEN');
   });
@@ -108,14 +118,18 @@ describe('L4: Lightning swaps between Spamcoin (SHA256) and BTC Lightning (Light
     await waitFor(swap.id, 'transaction.mempool');
     expect(await invoiceState('prov', swap.paymentHash)).toBe('ACCEPTED');
     const lock = await reverseLockup(swap.id);
-    console.log(`server SHA256 lockup ${lock.id}: ${describeSigs(parseTx(lock.hex))}`);
+    console.log(
+      `server SHA256 lockup ${lock.id}: ${describeSigs(parseTx(lock.hex))}`,
+    );
     // Funded from post-fork coins, so it cannot exist on the BLAKE2b chain
     await expectInvalidOn(BLAKE, lock.hex);
 
     await mine(SHA);
     await waitFor(swap.id, 'transaction.confirmed', SHA);
     const claim = await userClaim(swap, lock);
-    console.log(`user SHA256 claim: ${await rpc(SHA, 'sendrawtransaction', [claim.hex], '')}`);
+    console.log(
+      `user SHA256 claim: ${await rpc(SHA, 'sendrawtransaction', [claim.hex], '')}`,
+    );
     await mine(SHA);
 
     await waitFor(swap.id, 'invoice.settled', SHA);

@@ -22,7 +22,15 @@
  * Run from swapsha-backend, chains and both Lightning Fork nodes up:
  *   SWAPSHA_CRASH=1 npx jest --rootDir . swapsha-regtest/e2e/LightningCrash.spec.ts --runInBand
  */
-import { LOG, apiUp, configWithPace, crash, freshConfig, start, stop } from './backend';
+import {
+  LOG,
+  apiUp,
+  configWithPace,
+  crash,
+  freshConfig,
+  start,
+  stop,
+} from './backend';
 import {
   BLAKE,
   LIVE,
@@ -45,12 +53,14 @@ import {
   invoiceState,
   payAsync,
   reverseLockup,
+  stopPayments,
   tipAge,
   userInvoice,
 } from './ln';
 
 // Needs mining (and holding blocks back), so regtest only
-const run = process.env.SWAPSHA_CRASH === '1' && !LIVE ? describe : describe.skip;
+const run =
+  process.env.SWAPSHA_CRASH === '1' && !LIVE ? describe : describe.skip;
 
 const STALE = /BTC chain tip is \d+ minutes old/;
 
@@ -65,7 +75,10 @@ run('L4: Lightning crash recovery and stall guard', () => {
     console.log(`backend started by the test, log: ${LOG}`);
   });
 
-  afterAll(stop);
+  afterAll(async () => {
+    stopPayments();
+    await stop();
+  });
 
   describe('crash', () => {
     beforeEach(async () => {
@@ -106,7 +119,9 @@ run('L4: Lightning crash recovery and stall guard', () => {
       await waitFor(swap.id, 'transaction.claimed', SHA);
       expect(await invoiceState('user', paymentHash)).toBe('SETTLED');
       const claim = await findSpend(SHA, userLock);
-      console.log(`server SHA256 claim after restart: ${claim.slice(0, 16)}...`);
+      console.log(
+        `server SHA256 claim after restart: ${claim.slice(0, 16)}...`,
+      );
       await mine(SHA);
     });
   });
