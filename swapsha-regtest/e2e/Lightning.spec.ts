@@ -151,10 +151,20 @@ describe('L4: Lightning swaps between Spamcoin (SHA256) and BTC Lightning (Light
     const refund = parseTx(await findSpend(SHA, lock.id));
     console.log(`server SHA256 refund ${refund.id}: ${describeSigs(refund)}`);
     await expectInvalidOn(BLAKE, refund.hex);
+    // Boltz cancels the hold invoice only once its refund confirms
+    // (RefundWatcher), so keep mining SHA256 until the payment gives up
+    let done = false;
+    const result = payment.result.then((r) => {
+      done = true;
+      return r;
+    });
+    for (let i = 0; i < 60 && !done; i++) {
+      await mine(SHA);
+      await sleep(2000);
+    }
     // The user's BTC comes back: the payment fails and the invoice is cancelled
-    expect(await payment.result).toMatch(/^FAILED/);
+    expect(await result).toMatch(/^FAILED/);
     expect(await invoiceState('prov', swap.paymentHash)).toBe('CANCELED');
-    await mine(SHA);
   });
 
   test('type 2: an unpaid hold invoice expires and cannot be paid afterwards', async () => {
