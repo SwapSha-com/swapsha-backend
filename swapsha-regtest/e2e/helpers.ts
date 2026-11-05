@@ -156,11 +156,16 @@ export const waitFor = async (
   throw new Error(`swap ${id} stuck at ${await status(id)}, wanted ${want}`);
 };
 
-export const ensureUserWallets = async () => {
+/**
+ * Load the user wallets on `chains` and make sure they can fund the tests.
+ * The Lightning suites pass [SHA] only: their BTC side is the user's
+ * Lightning Fork node, not an on-chain wallet.
+ */
+export const ensureUserWallets = async (chains: number[] = [SHA, BLAKE]) => {
   if (LIVE) {
     // testnet4: coins come from faucets and the community, not from mining
     const missing: string[] = [];
-    for (const p of [SHA, BLAKE]) {
+    for (const p of chains) {
       try {
         await rpc(p, 'loadwallet', ['user'], '');
       } catch {
@@ -180,7 +185,7 @@ export const ensureUserWallets = async () => {
     if (missing.length > 0) throw new Error(missing.join('\n'));
     return;
   }
-  for (const p of [SHA, BLAKE]) {
+  for (const p of chains) {
     try {
       await rpc(p, 'loadwallet', ['user'], '');
     } catch {

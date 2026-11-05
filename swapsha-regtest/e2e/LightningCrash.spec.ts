@@ -68,7 +68,7 @@ run('L4: Lightning crash recovery and stall guard', () => {
   jest.setTimeout(TEST_TIMEOUT);
 
   beforeAll(async () => {
-    await ensureUserWallets();
+    await ensureUserWallets([SHA]);
     await crash();
     freshConfig();
     await start();

@@ -75,7 +75,8 @@ const waitTimer = async (id: string, want: string, seconds: number) => {
 describe('L4: Lightning swaps between Spamcoin (SHA256) and BTC Lightning (Lightning Fork)', () => {
   jest.setTimeout(TEST_TIMEOUT);
 
-  beforeAll(ensureUserWallets);
+  // Only the SHA256 user wallet: the BTC side is the user Lightning node
+  beforeAll(() => ensureUserWallets([SHA]));
   afterAll(stopPayments);
 
   test('type 1: SHA256 on chain -> BTC Lightning completes', async () => {
