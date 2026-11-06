@@ -1,5 +1,6 @@
 import Tracing from './Tracing';
 import { Networks as LiquidNetworks } from 'boltz-core/liquid';
+import path from 'node:path';
 import type { Arguments } from 'yargs';
 import type { ConfigType, TokenConfig } from './Config';
 import Config from './Config';
@@ -16,14 +17,15 @@ import {
   networkKind,
   verifyChainIdentity,
 } from './blake2b/ChainIdentity';
+import { setPaceBounds } from './blake2b/ChainPace';
+import { verifyLightningIdentity } from './blake2b/LightningIdentity';
 import {
   DEFAULT_CONFLICT_DEPTH,
   MAINNET_CONFLICT_DEPTH,
   setConflictDepth,
+  setVerdictFile,
   verifyProviderCoins,
 } from './blake2b/ProviderCoins';
-import { setPaceBounds } from './blake2b/ChainPace';
-import { verifyLightningIdentity } from './blake2b/LightningIdentity';
 import { setReplayForkHeight } from './blake2b/ReplayGuard';
 import { setSighashMode } from './blake2b/SighashMode';
 import ArkClient from './chain/ArkClient';
@@ -365,6 +367,8 @@ class Boltz {
             .chainClient as ChainClient,
         );
         setReplayForkHeight(forkHeight);
+        // D38 S3: unique verdicts survive restarts (pruned nodes)
+        setVerdictFile(path.join(this.config.datadir, 'blake2b-verdicts.json'));
         // A split coin is trusted once its conflicting spend is this deep
         setConflictDepth(
           networkKind(blake2bCurrency.network) === 'mainnet'

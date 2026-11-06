@@ -2,7 +2,15 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import type ChainClient from '../chain/ChainClient';
 import type { IChainClient } from '../chain/ChainClient';
 import type { RawTransaction, Transaction } from '../consts/Types';
+import { filterMatchesAny, spentScripts } from './BlockFilter';
 import { ChainIdentityError } from './ChainIdentity';
+
+/**
+ * No source has the transaction, so a verdict cannot be proven. Callers that
+ * walk several inputs can still prove a coin unique through another input; a
+ * wallet coin left unprovable is locked, not spent (D38 S3).
+ */
+export class UnprovableError extends ChainIdentityError {}
 
 /**
  * D38: finding transactions on a node that has no txindex.
@@ -21,6 +29,8 @@ import { ChainIdentityError } from './ChainIdentity';
  *     (`getblock <hash> 3`) gives the height every input was created at
  *   - for the replay guards only: the other chain, which shares this chain's
  *     history before the fork and runs txindex (the archival BLAKE2b node)
+ *   - last, BIP158 block filters: the script the spender's input spent
+ *     narrows the search to the few blocks whose filter matches it
  *
  * Nothing found is taken on trust: a transaction fetched by block hash must
  * hash to the txid that was asked for. When no source answers, the caller
@@ -347,9 +357,19 @@ export type FetchHints = {
    */
   oracle?: IChainClient;
   /** The transaction that spends this one, and which of its inputs does */
-  child?: { txid: string; blockhash?: string; input: number };
+  child?: {
+    txid: string;
+    blockhash?: string;
+    input: number;
+    /** Height of the child's block: this transaction is at or below it */
+    height?: number;
+    /** That input, for the script it spent (block filter search) */
+    spends?: { scriptSig?: { hex?: string }; txinwitness?: string[] };
+  };
   /** An output of this transaction that may still be unspent */
   vout?: number;
+  /** Lowest height worth searching (the fork, for SHA-256-only history) */
+  floor?: number;
 };
 
 /** Blocks to try around a height worked out from a tip that may have moved */
@@ -409,6 +429,78 @@ export const localCopy = async (
   return wallet ?? (seen === undefined ? undefined : decoded(client, seen.hex));
 };
 
+/** Filters per block hash; a filter never changes for a given block */
+const filterCache = new Map<string, string>();
+const FILTER_CACHE_MAX = 4_000;
+/** At most this many blocks are searched for one transaction */
+export const MAX_FILTER_SCAN = 50_000;
+const FILTER_BATCH = 25;
+
+/**
+ * Search the BIP158 filters from the spender's block down to `floor` for the
+ * block that created the output the spender's input spent, then read the
+ * transaction from it by hash. Needs `blockfilterindex` on the node;
+ * undefined when it is off or nothing matches. Costly, so it runs last.
+ */
+export const scanFilters = async (
+  client: IChainClient,
+  txid: string,
+  hints: FetchHints,
+): Promise<RawTransaction | undefined> => {
+  const spends = hints.child?.spends;
+  const rpc = rpcOf(client);
+  if (spends === undefined || rpc === undefined) return undefined;
+  const scripts = spentScripts(spends);
+  if (scripts.length === 0) return undefined;
+
+  let top: number;
+  try {
+    top = hints.child?.height ?? (await client.getBlockchainInfo()).blocks;
+  } catch {
+    return undefined;
+  }
+  const floor = Math.max(hints.floor ?? 0, top - MAX_FILTER_SCAN);
+
+  const filterAt = async (height: number) => {
+    const hash = await heightToHash(client, height);
+    if (hash === undefined) return undefined;
+    let filter = filterCache.get(hash);
+    if (filter === undefined) {
+      // Throws when the node has no block filter index: the search stops
+      filter = (
+        await rpc<{ filter: string }>('getblockfilter', [hash, 'basic'])
+      ).filter;
+      if (filterCache.size >= FILTER_CACHE_MAX) {
+        filterCache.delete(filterCache.keys().next().value!);
+      }
+      filterCache.set(hash, filter);
+    }
+    return filterMatchesAny(filter, hash, scripts) ? hash : undefined;
+  };
+
+  try {
+    for (let high = top; high >= floor; high -= FILTER_BATCH) {
+      const heights: number[] = [];
+      for (let h = high; h > high - FILTER_BATCH && h >= floor; h--) {
+        heights.push(h);
+      }
+      const matches = await Promise.all(heights.map(filterAt));
+      for (const hash of matches) {
+        if (hash === undefined) continue;
+        const tx = await inBlock(client, txid, hash);
+        if (tx !== undefined) {
+          rememberTransaction(client.symbol, tx.hex, hash);
+          return tx;
+        }
+      }
+    }
+  } catch (error) {
+    if (error instanceof ChainIdentityError) throw error;
+    return undefined;
+  }
+  return undefined;
+};
+
 /** Confirmations of the oracle's copy, restated against `client`'s tip. */
 const restate = async (
   client: IChainClient,
@@ -462,9 +554,12 @@ export const fetchTransaction = async (
     }
   }
 
+  const found = await scanFilters(client, txid, hints);
+  if (found !== undefined) return found;
+
   if (local !== undefined) return local;
 
-  throw new ChainIdentityError(
-    `${client.symbol} node has no txindex and SwapSha found no copy of ${txid} (D38: not in the wallet, not seen before, no block hint${hints.oracle === undefined ? '' : `, not on the ${hints.oracle.symbol} chain`}): ${errorText(nodeError)}`,
+  throw new UnprovableError(
+    `${client.symbol} node has no txindex and SwapSha found no copy of ${txid} (D38: not in the wallet, not seen before, no block hint${hints.oracle === undefined ? '' : `, not on the ${hints.oracle.symbol} chain`}, no block filter match): ${errorText(nodeError)}`,
   );
 };

@@ -1,5 +1,5 @@
 import type { IChainClient } from '../chain/ChainClient';
-import { classifyCoin } from './ProviderCoins';
+import { classifyCoin, rememberUnique, seededMemo } from './ProviderCoins';
 import { rememberTransaction } from './PrunedHistory';
 import { isBlake2bCurrency } from './SighashMode';
 
@@ -78,13 +78,19 @@ export const checkLockupReplay = async (
       // The walk still fetches the lockup from the node, and fails closed
     }
     const { blocks } = await ownChain.getBlockchainInfo();
+    // D38 S3: start from the unique verdicts already known and keep the new
+    // ones, so SwapSha's later claim of this lockup is provable without
+    // walking the user's history again
+    const memo = seededMemo(ownChain.symbol);
     const { verdict, reason: why } = await classifyCoin(
       ownChain,
       forkHeight,
       blocks,
       lockupTransactionId,
       { isBlake2b: isBlake2bCurrency(ownChain.symbol), other: otherChain },
+      memo,
     );
+    rememberUnique(ownChain.symbol, memo);
     if (verdict === 'shared') {
       return `user lockup ${lockupTransactionId} is replayable onto the ${other} chain once its ancestry is replayed: ${why}`;
     }

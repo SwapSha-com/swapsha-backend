@@ -1,8 +1,13 @@
+import fs from 'node:fs';
 import type ChainClient from '../chain/ChainClient';
 import type { IChainClient } from '../chain/ChainClient';
 import type { BlockVerbose, RawTransaction } from '../consts/Types';
 import { ChainIdentityError } from './ChainIdentity';
-import { type FetchHints, fetchTransaction } from './PrunedHistory';
+import {
+  type FetchHints,
+  UnprovableError,
+  fetchTransaction,
+} from './PrunedHistory';
 
 /**
  * Blueprint 4.4 / D26: every coin in a provider wallet must exist on its own
@@ -271,11 +276,15 @@ export const classifyCoin = async (
     tx = await fetchTransaction(client, txid, {
       ...hints,
       oracle: options.other,
+      // SHA-256-only history starts at the fork; older is shared history
+      floor: forkHeight,
     });
   } catch (error) {
-    throw new ChainIdentityError(
-      `${client.symbol} wallet: cannot fetch ancestor ${txid} to check it against the fork (is txindex=1 set?): ${(error as Error).message ?? error}`,
-    );
+    const message = `${client.symbol} wallet: cannot fetch ancestor ${txid} to check it against the fork (is txindex=1 set?): ${(error as Error).message ?? error}`;
+    // Not found anywhere (D38) is unprovable; anything else is a broken node
+    throw error instanceof UnprovableError
+      ? new UnprovableError(message)
+      : new ChainIdentityError(message);
   }
 
   const height =
@@ -304,20 +313,41 @@ export const classifyCoin = async (
       verdict: 'shared',
       reason: `${txid} spends only shared coins without SIGHASH_UNIFIED, so it can be replayed`,
     };
+    // One unique input is enough. An input whose ancestry cannot be found
+    // (D38, a node without txindex) is skipped while the others are tried;
+    // if none proves the coin unique, the coin is unprovable, not shared.
+    let unprovable: UnprovableError | undefined;
+    const childHeight =
+      tx.confirmations !== undefined && tx.confirmations > 0
+        ? tip - tx.confirmations + 1
+        : undefined;
     for (const [index, input] of tx.vin.entries()) {
-      const parent = await classifyCoin(
-        client,
-        forkHeight,
-        tip,
-        input.txid,
-        options,
-        memo,
-        visits,
-        {
-          child: { txid: tx.txid, blockhash: tx.blockhash, input: index },
-          vout: input.vout,
-        },
-      );
+      let parent: Verdict;
+      try {
+        parent = await classifyCoin(
+          client,
+          forkHeight,
+          tip,
+          input.txid,
+          options,
+          memo,
+          visits,
+          {
+            child: {
+              txid: tx.txid,
+              blockhash: tx.blockhash,
+              input: index,
+              height: childHeight,
+              spends: input,
+            },
+            vout: input.vout,
+          },
+        );
+      } catch (error) {
+        if (!(error instanceof UnprovableError)) throw error;
+        unprovable ??= error;
+        continue;
+      }
       if (parent.verdict === 'unique') {
         result = parent;
         break;
@@ -334,6 +364,9 @@ export const classifyCoin = async (
         result = conflict;
         shallowSplit = conflict.verdict === 'shared';
       }
+    }
+    if (result.verdict === 'shared' && unprovable !== undefined) {
+      throw unprovable;
     }
     if (result.verdict === 'shared' && !shallowSplit) {
       // Name the root cause only: nesting every hop grows without bound
@@ -396,6 +429,7 @@ export const verifyProviderCoins = async (
 
   // Every Core-backed client has rpc(); a mock in a unit test may not
   const rpc = (other as Partial<ChainClient>).rpc;
+  const unprovable: Quarantined[] = [];
 
   for (const utxo of utxos) {
     const outpoint = `${utxo.txid}:${utxo.vout}`;
@@ -409,25 +443,82 @@ export const verifyProviderCoins = async (
       }
     }
 
-    const { verdict, reason } = await classifyCoin(
-      client,
-      forkHeight,
-      tip,
-      utxo.txid,
-      options,
-      memo,
-      visits,
-      { vout: utxo.vout },
-    );
-    if (verdict === 'shared') {
+    let verdict: Verdict;
+    try {
+      verdict = await classifyCoin(
+        client,
+        forkHeight,
+        tip,
+        utxo.txid,
+        options,
+        memo,
+        visits,
+        { vout: utxo.vout },
+      );
+    } catch (error) {
+      if (!(error instanceof UnprovableError)) throw error;
+      unprovable.push({ outpoint, amount: utxo.amount, reason: error.message });
+      continue;
+    }
+    if (verdict.verdict === 'shared') {
       throw new ChainIdentityError(
-        `${client.symbol} wallet coin ${outpoint} (${utxo.amount}) can exist on the ${other.symbol} chain too: ${reason}. Move it out or fund a fresh wallet with coins unique to this chain.`,
+        `${client.symbol} wallet coin ${outpoint} (${utxo.amount}) can exist on the ${other.symbol} chain too: ${verdict.reason}. Move it out or fund a fresh wallet with coins unique to this chain.`,
       );
     }
   }
 
   rememberUnique(client.symbol, memo);
-  return `${client.symbol} wallet: ${utxos.length} coin(s), all unique to this chain (fork at ${forkHeight}, ${visits.count} transaction(s) checked)`;
+
+  if (unprovable.length === 0) {
+    return `${client.symbol} wallet: ${utxos.length} coin(s), all unique to this chain (fork at ${forkHeight}, ${visits.count} transaction(s) checked)`;
+  }
+  // D38 S3: a coin SwapSha cannot prove unique is locked, not spent. The
+  // lock is in memory only, so the next start (or a node restart) checks it
+  // again, by which time it may be provable.
+  await lockCoins(client, unprovable, false);
+  return `${client.symbol} wallet: ${utxos.length - unprovable.length} of ${utxos.length} coin(s) unique to this chain (fork at ${forkHeight}, ${visits.count} transaction(s) checked); ${unprovable.length} could not be proven on a node without txindex and are locked until the next start: ${unprovable
+    .slice(0, 5)
+    .map((q) => `${q.outpoint} (${q.amount})`)
+    .join(', ')}${unprovable.length > 5 ? ', ...' : ''}`;
+};
+
+/** lockunspent through the wallet path; persistent or in memory only */
+const lockCoins = async (
+  client: IChainClient,
+  coins: Quarantined[],
+  persistent: boolean,
+) => {
+  // lockunspent is a wallet method: it must go to /wallet/<name>, because
+  // a node with several wallets loaded refuses it on the node path
+  const walletRpc = (client as Partial<ChainClient>).walletRpc;
+  if (walletRpc === undefined) {
+    throw new ChainIdentityError(
+      `${client.symbol} wallet: cannot lock ${coins.length} coin(s): ${coins
+        .map((q) => q.reason)
+        .join('; ')}`,
+    );
+  }
+  const outpoints = coins.map((q) => {
+    const [txid, vout] = q.outpoint.split(':');
+    return { txid, vout: Number(vout) };
+  });
+  if (!persistent) {
+    await walletRpc.call(client, 'lockunspent', [false, outpoints]);
+    return;
+  }
+  try {
+    await walletRpc.call(client, 'lockunspent', [false, outpoints, true]);
+  } catch (persistentError) {
+    // Older nodes have no persistent flag; an in-memory lock still covers
+    // this lockup, and the next check locks the coin again
+    try {
+      await walletRpc.call(client, 'lockunspent', [false, outpoints]);
+    } catch (error) {
+      throw new ChainIdentityError(
+        `${client.symbol} wallet: lockunspent failed: ${errorText(persistentError)}; without the persistent flag: ${errorText(error)}`,
+      );
+    }
+  }
 };
 
 /**
@@ -439,18 +530,60 @@ export const verifyProviderCoins = async (
  */
 const uniqueByChain = new Map<string, Map<string, Verdict>>();
 
-const seededMemo = (symbol: string) =>
+/**
+ * D38 S3: the unique verdicts are also kept in a file in the data dir, so a
+ * restart does not have to walk history again. That matters on a pruned
+ * node: a verdict reached while a coin's blocks were recent may not be
+ * reachable again once they are pruned.
+ */
+let verdictFile: string | undefined;
+
+export const setVerdictFile = (path: string | undefined) => {
+  verdictFile = path;
+  if (path === undefined || !fs.existsSync(path)) return;
+  const stored = JSON.parse(fs.readFileSync(path, 'utf8')) as Record<
+    string,
+    Record<string, string>
+  >;
+  for (const [symbol, verdicts] of Object.entries(stored)) {
+    const known = uniqueByChain.get(symbol) ?? new Map<string, Verdict>();
+    for (const [txid, reason] of Object.entries(verdicts)) {
+      known.set(txid, { verdict: 'unique', reason });
+    }
+    uniqueByChain.set(symbol, known);
+  }
+};
+
+const saveVerdicts = () => {
+  if (verdictFile === undefined) return;
+  const out: Record<string, Record<string, string>> = {};
+  for (const [symbol, known] of uniqueByChain) {
+    out[symbol] = Object.fromEntries(
+      [...known].map(([txid, v]) => [txid, v.reason]),
+    );
+  }
+  const tmp = `${verdictFile}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(out));
+  fs.renameSync(tmp, verdictFile);
+};
+
+export const seededMemo = (symbol: string) =>
   new Map<string, Verdict>(uniqueByChain.get(symbol) ?? []);
 
-const rememberUnique = (symbol: string, memo: Map<string, Verdict>) => {
+export const rememberUnique = (symbol: string, memo: Map<string, Verdict>) => {
   let known = uniqueByChain.get(symbol);
   if (known === undefined) {
     known = new Map();
     uniqueByChain.set(symbol, known);
   }
+  let added = false;
   for (const [txid, verdict] of memo) {
-    if (verdict.verdict === 'unique') known.set(txid, verdict);
+    if (verdict.verdict === 'unique' && !known.has(txid)) {
+      known.set(txid, verdict);
+      added = true;
+    }
   }
+  if (added) saveVerdicts();
 };
 
 /** Test hook: forget every remembered verdict. */
@@ -481,6 +614,7 @@ export const quarantineSharedCoins = async (
   const visits = { count: 0 };
   const rpcOther = (other as Partial<ChainClient>).rpc;
   const quarantined: Quarantined[] = [];
+  const unprovable: Quarantined[] = [];
 
   for (const utxo of utxos) {
     const outpoint = `${utxo.txid}:${utxo.vout}`;
@@ -495,49 +629,44 @@ export const quarantineSharedCoins = async (
         continue;
       }
     }
-    const { verdict, reason } = await classifyCoin(
-      client,
-      forkHeight,
-      info.blocks,
-      utxo.txid,
-      options,
-      memo,
-      visits,
-      { vout: utxo.vout },
-    );
-    if (verdict === 'shared') {
-      quarantined.push({ outpoint, amount: utxo.amount, reason });
+    let verdict: Verdict;
+    try {
+      verdict = await classifyCoin(
+        client,
+        forkHeight,
+        info.blocks,
+        utxo.txid,
+        options,
+        memo,
+        visits,
+        { vout: utxo.vout },
+      );
+    } catch (error) {
+      if (!(error instanceof UnprovableError)) throw error;
+      unprovable.push({ outpoint, amount: utxo.amount, reason: error.message });
+      continue;
+    }
+    if (verdict.verdict === 'shared') {
+      quarantined.push({
+        outpoint,
+        amount: utxo.amount,
+        reason: verdict.reason,
+      });
     }
   }
   rememberUnique(client.symbol, memo);
 
   if (quarantined.length > 0) {
-    // lockunspent is a wallet method: it must go to /wallet/<name>, because
-    // a node with several wallets loaded refuses it on the node path
-    const walletRpc = (client as Partial<ChainClient>).walletRpc;
-    if (walletRpc === undefined) {
-      throw new ChainIdentityError(
-        `${client.symbol} wallet: cannot lock ${quarantined.length} shared coin(s)`,
-      );
-    }
-    const coins = quarantined.map((q) => {
-      const [txid, vout] = q.outpoint.split(':');
-      return { txid, vout: Number(vout) };
-    });
-    try {
-      await walletRpc.call(client, 'lockunspent', [false, coins, true]);
-    } catch (persistentError) {
-      // Older nodes have no persistent flag; an in-memory lock still covers
-      // this lockup, and the next check locks the coin again
-      try {
-        await walletRpc.call(client, 'lockunspent', [false, coins]);
-      } catch (error) {
-        throw new ChainIdentityError(
-          `${client.symbol} wallet: lockunspent failed: ${errorText(persistentError)}; without the persistent flag: ${errorText(error)}`,
-        );
-      }
-    }
+    await lockCoins(client, quarantined, true);
+  }
+  // D38 S3: unprovable is not shared, so the lock is in memory only and the
+  // coin is checked again later; it is still never spent unproven
+  if (unprovable.length > 0) {
+    await lockCoins(client, unprovable, false);
   }
 
-  return { checked: visits.count, quarantined };
+  return {
+    checked: visits.count,
+    quarantined: [...quarantined, ...unprovable],
+  };
 };
