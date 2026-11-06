@@ -136,7 +136,7 @@ export const freshConfig = () => {
 
 /**
  * boltzd runs the compiled code in dist/, and only run.sh compiles it. A suite
- * run after `git am` without compiling tests the old code: on Nov 6,
+ * run after `git am` without compiling tests the old code: on Nov 5,
  * Crash.spec ran the build from patch 0037 with 0040 applied, and failed for
  * a fix it never loaded. `compile:typescript` writes the commit it built from
  * into dist/lib/Version.js. Refuse to start when lib/ has changed since then.

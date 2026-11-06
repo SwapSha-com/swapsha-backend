@@ -80,7 +80,7 @@ const loadOrCreate = async (nodePort: number, wallet: string) => {
  * nLockTime is set to 1. Left at 0, the wallet sets it to its own chain's tip
  * (anti fee sniping), and checking the deposit on the other chain then means
  * mining that chain up to this one's height: thousands of blocks once the
- * Lightning suites have run, which mine SHA256 only (Nov 6: test B timed out
+ * Lightning suites have run, which mine SHA256 only (Nov 5: test B timed out
  * mining BTC from 5565 towards 9437). Height 1 is final on both chains.
  */
 const sendPreForkCoin = async (

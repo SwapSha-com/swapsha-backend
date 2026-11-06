@@ -5,6 +5,8 @@ import { outputScriptFromAddress } from '../../AddressUtils';
 import type Logger from '../../Logger';
 import { TxView } from '../../TxView';
 import { isTxConfirmed } from '../../Utils';
+import { isBlake2bCurrency } from '../../blake2b/SighashMode';
+import { inputsWithoutOptIn } from '../../blake2b/WalletOptIn';
 import type { IChainClient } from '../../chain/ChainClient';
 import ChainClient, { AddressType } from '../../chain/ChainClient';
 import type { BitcoinNetwork } from '../../consts/BitcoinNetworks';
@@ -111,6 +113,16 @@ class CoreWalletProvider implements WalletProviderInterface {
     const rawTransaction = Transaction.fromRaw(
       hexToBytes(walletTransaction.hex),
     );
+
+    // D38 S4: every input the BLAKE2b wallet signs should opt in (D23 update)
+    if (isBlake2bCurrency(this.symbol)) {
+      const missing = inputsWithoutOptIn(rawTransaction);
+      if (missing.length > 0) {
+        this.logger.warn(
+          `${this.symbol} wallet transaction ${transactionId}: input(s) ${missing.join(', ')} carry no SIGHASH_UNIFIED signature. Not replayable while the D26 guard holds (its coins exist on this chain only), but the Knots wallet no longer opts in for every coin type it spends: check its build`,
+        );
+      }
+    }
     const targetScriptPubKey = outputScriptFromAddress(
       CurrencyType.BitcoinLike,
       address,

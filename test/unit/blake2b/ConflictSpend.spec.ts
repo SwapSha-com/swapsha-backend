@@ -132,6 +132,33 @@ describe('conflicting spend on the other chain', () => {
     ).resolves.toContain('all unique');
   });
 
+  test('a node without txindex on the other side cannot rescue: refused with the root cause (D38)', async () => {
+    const btc = node(
+      'BTC',
+      { old: OLD, split: { height: 280, parents: ['old'] } },
+      ['split'],
+      ['split'],
+    );
+    const xbt = node(
+      'XBT',
+      { old: OLD, xsplit: { height: 270, parents: ['old'] } },
+      [],
+      [],
+    );
+    // Like the pruned SHA-256 Companion: lookups by id answer for the mempool only
+    (xbt.getRawTransactionVerbose as jest.Mock).mockImplementation(async () => {
+      throw new Error(
+        'No such mempool transaction. Use -txindex or provide a block hash to enable blockchain transaction queries.',
+      );
+    });
+
+    await expect(
+      verifyProviderCoins(btc, xbt, FORK, { isBlake2b: false, other: xbt }),
+    ).rejects.toThrow(
+      /can exist on the XBT chain too: ancestor old .*before the fork/,
+    );
+  });
+
   test('still refuses without the other chain (old behaviour)', async () => {
     const btc = node(
       'BTC',

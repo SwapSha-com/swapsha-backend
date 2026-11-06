@@ -7,6 +7,7 @@ import {
   type FetchHints,
   UnprovableError,
   fetchTransaction,
+  isNotHere,
 } from './PrunedHistory';
 
 /**
@@ -118,6 +119,12 @@ const NOT_FOUND = /No such mempool or blockchain transaction/i;
 const errorText = (error: unknown) =>
   typeof error === 'string' ? error : ((error as Error)?.message ?? `${error}`);
 
+/**
+ * D38: the other chain's node has no txindex (the pruned SHA-256 Companion),
+ * so "not found" there does not mean "not on that chain".
+ */
+class NoIndexOnOther extends ChainIdentityError {}
+
 /** The other chain's confirmed transaction, or undefined when it has none. */
 const fetchOnOther = async (
   other: IChainClient,
@@ -127,6 +134,11 @@ const fetchOnOther = async (
     return await other.getRawTransactionVerbose(txid);
   } catch (error) {
     if (NOT_FOUND.test(errorText(error))) return undefined;
+    if (isNotHere(error)) {
+      throw new NoIndexOnOther(
+        `${other.symbol} node has no txindex: cannot tell whether ${txid} is on its chain`,
+      );
+    }
     throw new ChainIdentityError(
       `${other.symbol} node: cannot look up ${txid} to check for a conflicting spend (is txindex=1 set?): ${errorText(error)}`,
     );
@@ -190,11 +202,29 @@ const recentSpendDepth = async (
  * least `depth` blocks deep, or a reorg could undo it; a shallower one gives
  * 'shallow' (shared for now). Undefined when no input conflicts. Fails
  * closed on any lookup error other than "not found".
+ *
+ * D38: against a node without txindex this cannot be shown, because absence
+ * there proves nothing. Then there is no rescue (undefined) and the coin
+ * stays shared, so the caller refuses it with its root cause, not with an
+ * error about the other node's lookups.
  */
 export const conflictOnOther = async (
   other: IChainClient,
   tx: RawTransaction,
   depth = conflictDepth,
+): Promise<{ verdict: Uniqueness; reason: string } | undefined> => {
+  try {
+    return await findConflictOnOther(other, tx, depth);
+  } catch (error) {
+    if (error instanceof NoIndexOnOther) return undefined;
+    throw error;
+  }
+};
+
+const findConflictOnOther = async (
+  other: IChainClient,
+  tx: RawTransaction,
+  depth: number,
 ): Promise<{ verdict: Uniqueness; reason: string } | undefined> => {
   const rpc = (other as Partial<ChainClient>).rpc;
   if (rpc === undefined) return undefined;
