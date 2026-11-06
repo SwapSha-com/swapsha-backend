@@ -70,8 +70,13 @@ export const checkLockupReplay = async (
 
   try {
     // D38: on a node without txindex the walk may not find the confirmed
-    // lockup by id; we have its bytes, so it can find it through them
-    rememberTransaction(ownChain.symbol, lockupTransactionHex);
+    // lockup by id; we have its bytes, so it can find it through them.
+    // Best effort: bytes that do not parse just leave the walk to the node.
+    try {
+      rememberTransaction(ownChain.symbol, lockupTransactionHex);
+    } catch {
+      // The walk still fetches the lockup from the node, and fails closed
+    }
     const { blocks } = await ownChain.getBlockchainInfo();
     const { verdict, reason: why } = await classifyCoin(
       ownChain,
