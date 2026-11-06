@@ -19,6 +19,7 @@ import {
   toProtoInt,
 } from '../Utils';
 import type SwapInfos from '../api/SwapInfos';
+import { rememberTransaction } from '../blake2b/PrunedHistory';
 import type { SomeTransaction } from '../chain/ChainClient';
 import ElementsClient from '../chain/ElementsClient';
 import { ClientStatus, CurrencyType, SwapUpdateEvent } from '../consts/Enums';
@@ -681,6 +682,18 @@ class Sidecar extends BaseClient<
           status === TransactionStatus.NotSafe
         ) {
           return;
+        }
+
+        if (currencyType === CurrencyType.BitcoinLike) {
+          // SwapSha D38: lookups on a node without txindex need the bytes
+          try {
+            rememberTransaction(
+              transaction.symbol,
+              Buffer.from(transaction.transaction).toString('hex'),
+            );
+          } catch {
+            // Not a parsable Bitcoin transaction; lookups fall back as before
+          }
         }
 
         this.emit('transaction', {

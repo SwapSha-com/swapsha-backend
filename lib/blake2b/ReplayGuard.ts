@@ -1,5 +1,6 @@
 import type { IChainClient } from '../chain/ChainClient';
 import { classifyCoin } from './ProviderCoins';
+import { rememberTransaction } from './PrunedHistory';
 import { isBlake2bCurrency } from './SighashMode';
 
 /**
@@ -68,6 +69,9 @@ export const checkLockupReplay = async (
   }
 
   try {
+    // D38: on a node without txindex the walk may not find the confirmed
+    // lockup by id; we have its bytes, so it can find it through them
+    rememberTransaction(ownChain.symbol, lockupTransactionHex);
     const { blocks } = await ownChain.getBlockchainInfo();
     const { verdict, reason: why } = await classifyCoin(
       ownChain,

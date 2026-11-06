@@ -4,6 +4,11 @@ import BaseClient from '../BaseClient';
 import type { ChainConfig } from '../Config';
 import type Logger from '../Logger';
 import { formatError } from '../Utils';
+import {
+  isNotHere,
+  localCopy,
+  rememberTransaction,
+} from '../blake2b/PrunedHistory';
 import { ClientStatus, CurrencyType } from '../consts/Enums';
 import type TypedEventEmitter from '../consts/TypedEventEmitter';
 import type {
@@ -135,9 +140,11 @@ class ChainClient extends BaseClient implements IChainClient {
     rawTransaction: string,
   ): Promise<string> => {
     try {
-      return await this.client.request<string>('sendrawtransaction', [
+      const id = await this.client.request<string>('sendrawtransaction', [
         rawTransaction,
       ]);
+      this.remember(rawTransaction);
+      return id;
     } catch (e) {
       if (Rebroadcaster.isReasonToRebroadcast(formatError(e))) {
         await this.rebroadcaster.save(rawTransaction);
@@ -147,10 +154,18 @@ class ChainClient extends BaseClient implements IChainClient {
     }
   };
 
+  // SwapSha D38: a node without txindex (the pruned SHA-256 Companion) only
+  // answers these for the mempool. When it says it does not have a
+  // transaction, look in the wallet and in transactions already seen, and
+  // fetch the block by hash (PrunedHistory). With txindex nothing changes.
   public getRawTransaction = async (id: string): Promise<string> => {
     try {
       return await this.client.request<string>('getrawtransaction', [id]);
     } catch (error) {
+      if (isNotHere(error)) {
+        const copy = await localCopy(this, id);
+        if (copy !== undefined) return copy.hex;
+      }
       throw this.formatGetTransactionError(id, error);
     }
   };
@@ -164,7 +179,24 @@ class ChainClient extends BaseClient implements IChainClient {
         1,
       ]);
     } catch (error) {
+      if (isNotHere(error)) {
+        // Only a copy placed in a block: one the mempool does not have and
+        // no block holds would read as unconfirmed, which is not true
+        const copy = await localCopy(this, id);
+        if (copy?.confirmations !== undefined) return copy;
+      }
       throw this.formatGetTransactionError(id, error);
+    }
+  };
+
+  /** D38: keep a transaction SwapSha has seen or sent; never throws */
+  public remember = (rawTransaction: string, blockhash?: string) => {
+    try {
+      rememberTransaction(this.symbol, rawTransaction, blockhash);
+    } catch (error) {
+      this.logger.debug(
+        `Could not keep ${this.symbol} transaction for lookups without txindex: ${formatError(error)}`,
+      );
     }
   };
 

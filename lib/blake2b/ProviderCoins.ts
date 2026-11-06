@@ -2,6 +2,7 @@ import type ChainClient from '../chain/ChainClient';
 import type { IChainClient } from '../chain/ChainClient';
 import type { BlockVerbose, RawTransaction } from '../consts/Types';
 import { ChainIdentityError } from './ChainIdentity';
+import { type FetchHints, fetchTransaction } from './PrunedHistory';
 
 /**
  * Blueprint 4.4 / D26: every coin in a provider wallet must exist on its own
@@ -28,8 +29,10 @@ import { ChainIdentityError } from './ChainIdentity';
  * Before the walk, each coin is looked up on the other chain directly: if it is
  * already there, it is shared no matter what the walk would say.
  *
- * Fails closed: a transaction we cannot fetch (no txindex) or a walk longer
- * than `maxVisits` refuses startup.
+ * Fails closed: a transaction we cannot fetch or a walk longer than
+ * `maxVisits` refuses startup. On a node without txindex (D38, the pruned
+ * SHA-256 Companion), transactions are found through PrunedHistory, and
+ * anything the other chain has is read from there: it is shared history.
  */
 
 export type Uniqueness = 'unique' | 'shared';
@@ -250,6 +253,9 @@ export const classifyCoin = async (
   options: Options,
   memo = new Map<string, Verdict>(),
   visits = { count: 0 },
+  // D38: where to look when the node has no txindex (the spending child, an
+  // output that may be unspent); the other chain is always passed as oracle
+  hints: FetchHints = {},
 ): Promise<Verdict> => {
   const known = memo.get(txid);
   if (known !== undefined) return known;
@@ -262,7 +268,10 @@ export const classifyCoin = async (
 
   let tx: RawTransaction;
   try {
-    tx = await client.getRawTransactionVerbose(txid);
+    tx = await fetchTransaction(client, txid, {
+      ...hints,
+      oracle: options.other,
+    });
   } catch (error) {
     throw new ChainIdentityError(
       `${client.symbol} wallet: cannot fetch ancestor ${txid} to check it against the fork (is txindex=1 set?): ${(error as Error).message ?? error}`,
@@ -295,7 +304,7 @@ export const classifyCoin = async (
       verdict: 'shared',
       reason: `${txid} spends only shared coins without SIGHASH_UNIFIED, so it can be replayed`,
     };
-    for (const input of tx.vin) {
+    for (const [index, input] of tx.vin.entries()) {
       const parent = await classifyCoin(
         client,
         forkHeight,
@@ -304,6 +313,10 @@ export const classifyCoin = async (
         options,
         memo,
         visits,
+        {
+          child: { txid: tx.txid, blockhash: tx.blockhash, input: index },
+          vout: input.vout,
+        },
       );
       if (parent.verdict === 'unique') {
         result = parent;
@@ -404,6 +417,7 @@ export const verifyProviderCoins = async (
       options,
       memo,
       visits,
+      { vout: utxo.vout },
     );
     if (verdict === 'shared') {
       throw new ChainIdentityError(
@@ -489,6 +503,7 @@ export const quarantineSharedCoins = async (
       options,
       memo,
       visits,
+      { vout: utxo.vout },
     );
     if (verdict === 'shared') {
       quarantined.push({ outpoint, amount: utxo.amount, reason });
