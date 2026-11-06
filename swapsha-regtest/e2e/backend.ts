@@ -135,11 +135,49 @@ export const freshConfig = () => {
 };
 
 /**
+ * boltzd runs the compiled code in dist/, and only run.sh compiles it. A suite
+ * run after `git am` without compiling tests the old code: on Nov 6,
+ * Crash.spec ran the build from patch 0037 with 0040 applied, and failed for
+ * a fix it never loaded. `compile:typescript` writes the commit it built from
+ * into dist/lib/Version.js. Refuse to start when lib/ has changed since then.
+ */
+export const checkBuild = () => {
+  const fail = (why: string): never => {
+    throw new Error(
+      `${why}. Run npm run compile:typescript, then the suite again.`,
+    );
+  };
+  let version = '';
+  try {
+    version = fs.readFileSync('dist/lib/Version.js', 'utf8');
+  } catch {
+    return fail('no build in dist/');
+  }
+  const built = version.match(/'-([0-9a-f]{8})/)?.[1];
+  if (built === undefined)
+    return fail('dist/ does not say what it was built from');
+  try {
+    execSync(`git diff --quiet ${built} HEAD -- lib`, { stdio: 'ignore' });
+  } catch {
+    // Exit 1: lib/ differs. Exit 128: that commit is gone (a rebase).
+    return fail(
+      `dist/ was built from ${built}, and lib/ has changed since (or that commit is gone)`,
+    );
+  }
+  try {
+    execSync('git diff --quiet HEAD -- lib', { stdio: 'ignore' });
+  } catch {
+    console.warn('lib/ has uncommitted changes; dist/ may not include them');
+  }
+};
+
+/**
  * Start boltzd (which starts the sidecar) and wait until the API answers.
  * Throws StartupRefused if it exits first.
  */
 export const start = async (configPath = `${DATA}/boltz.conf`) => {
   if (await apiUp()) throw new Error('a backend is already running on 9001');
+  checkBuild();
   const from = fs.existsSync(LOG) ? fs.statSync(LOG).size : 0;
   const out = fs.openSync(LOG, 'a');
   fs.writeSync(out, `\n===== start with ${configPath} =====\n`);
