@@ -1,3 +1,4 @@
+import { resetUniqueCache } from '../../../lib/blake2b/ProviderCoins';
 import {
   checkLockupReplay,
   isReplayPair,
@@ -24,6 +25,9 @@ const other = (opts: { known?: boolean; allowed?: boolean; reason?: string }) =>
   }) as unknown as IChainClient;
 
 describe('ReplayGuard (D18)', () => {
+  // D18 now keeps unique verdicts (D38 S3); the fake txids repeat across tests
+  beforeEach(() => resetUniqueCache());
+
   beforeAll(() => {
     setSighashMode('BTC', 'legacy');
     setSighashMode('XBT', 'unified');
