@@ -1046,7 +1046,9 @@ class SwapNursery extends TypedEventEmitter<SwapNurseryEvents> {
       case CurrencyType.BitcoinLike:
       case CurrencyType.Liquid: {
         const lockupTransactionHex =
-          await currency.chainClient!.getRawTransaction(txToClaim!);
+          await currency.chainClient!.getRawTransaction(txToClaim!, {
+            vout: logIndexToClaim,
+          });
 
         await this.claimUtxo(
           swap,
@@ -1258,7 +1260,9 @@ class SwapNursery extends TypedEventEmitter<SwapNurseryEvents> {
     ) {
       const replay = await checkLockupReplay(
         lockupId,
-        await receivingClient.getRawTransaction(lockupId),
+        await receivingClient.getRawTransaction(lockupId, {
+          vout: swap.receivingData.transactionVout,
+        }),
         sendingCurrency.chainClient,
         receivingClient,
       );

@@ -51,7 +51,10 @@ interface IChainClient extends TypedEventEmitter<ChainClientEvents> {
   getBlockhash(height: number): Promise<string>;
 
   sendRawTransaction(transactionHex: string): Promise<string>;
-  getRawTransaction(transactionId: string): Promise<string>;
+  getRawTransaction(
+    transactionId: string,
+    hints?: TransactionHints,
+  ): Promise<string>;
   getRawTransactionVerbose(transactionId: string): Promise<RawTransaction>;
   getWalletTransaction(transactionId: string): Promise<WalletTransaction>;
   saveRebroadcast(rawTransaction: string): Promise<void>;
@@ -69,6 +72,13 @@ interface IChainClient extends TypedEventEmitter<ChainClientEvents> {
     label: string,
   ): Promise<string>;
 }
+
+/**
+ * D38: what the caller already knows about a transaction it asks for. Only
+ * used when the node has no txindex and does not have it: an output that is
+ * still unspent gives the height of its block (`gettxout`).
+ */
+export type TransactionHints = { vout?: number | null };
 
 class ChainClient extends BaseClient implements IChainClient {
   public static readonly serviceName = 'Core';
@@ -158,12 +168,17 @@ class ChainClient extends BaseClient implements IChainClient {
   // answers these for the mempool. When it says it does not have a
   // transaction, look in the wallet and in transactions already seen, and
   // fetch the block by hash (PrunedHistory). With txindex nothing changes.
-  public getRawTransaction = async (id: string): Promise<string> => {
+  public getRawTransaction = async (
+    id: string,
+    hints: TransactionHints = {},
+  ): Promise<string> => {
     try {
       return await this.client.request<string>('getrawtransaction', [id]);
     } catch (error) {
       if (isNotHere(error)) {
-        const copy = await localCopy(this, id);
+        const copy = await localCopy(this, id, {
+          vout: hints.vout ?? undefined,
+        });
         if (copy !== undefined) return copy.hex;
       }
       throw this.formatGetTransactionError(id, error);

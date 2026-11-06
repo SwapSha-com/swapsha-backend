@@ -26,6 +26,7 @@ import {
   setVerdictFile,
   verifyProviderCoins,
 } from './blake2b/ProviderCoins';
+import { setSeenFile } from './blake2b/PrunedHistory';
 import { setReplayForkHeight } from './blake2b/ReplayGuard';
 import { setSighashMode } from './blake2b/SighashMode';
 import ArkClient from './chain/ArkClient';
@@ -317,6 +318,12 @@ class Boltz {
 
       // To initialize the key provider before starting the sidecar
       await this.walletManager.init(this.config.currencies);
+
+      // D38 S1: transactions seen before a restart, loaded before the sidecar
+      // reports new ones (a pruned node cannot look up a confirmed lockup)
+      if (this.config.currencies.some((c) => c.blake2b === true)) {
+        setSeenFile(path.join(this.config.datadir, 'blake2b-seen.jsonl'));
+      }
 
       Sidecar.start(this.logger, this.config);
       await this.sidecar.connect(this.service.eventHandler, this.api.swapInfos);

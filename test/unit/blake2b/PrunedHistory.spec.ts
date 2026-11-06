@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { ChainIdentityError } from '../../../lib/blake2b/ChainIdentity';
 import {
   fetchTransaction,
@@ -6,6 +9,7 @@ import {
   localCopy,
   rememberTransaction,
   resetKnownTransactions,
+  setSeenFile,
   txidOfHex,
 } from '../../../lib/blake2b/PrunedHistory';
 import type { IChainClient } from '../../../lib/chain/ChainClient';
@@ -341,6 +345,92 @@ describe('PrunedHistory (D38)', () => {
       await expect(
         localCopy(fakeNode('SHA256', {}), SEGWIT_TXID),
       ).resolves.toBeUndefined();
+    });
+  });
+
+  describe('seen transactions survive a restart (data dir)', () => {
+    let file: string;
+
+    beforeEach(() => {
+      file = path.join(
+        fs.mkdtempSync(path.join(os.tmpdir(), 'swapsha-seen-')),
+        'blake2b-seen.jsonl',
+      );
+      setSeenFile(file);
+    });
+
+    afterEach(() => setSeenFile(undefined));
+
+    const restart = () => {
+      resetKnownTransactions();
+      setSeenFile(file);
+    };
+
+    test('a lockup seen before a crash is found after it', async () => {
+      rememberTransaction('SHA256', SEGWIT_TX);
+      restart();
+      expect(knownTransaction('SHA256', SEGWIT_TXID)?.hex).toEqual(SEGWIT_TX);
+
+      // Confirmed while down, block not in memory: placed by its output
+      const node = fakeNode('SHA256', {
+        unspent: { [`${SEGWIT_TXID}:0`]: 470 },
+        blocks: { [SEGWIT_TXID]: 470 },
+        hexOf: { [SEGWIT_TXID]: SEGWIT_TX },
+      });
+      const copy = await localCopy(node, SEGWIT_TXID);
+      expect(copy?.confirmations).toEqual(TIP - 470 + 1);
+    });
+
+    test('the block found for it is kept too', async () => {
+      rememberTransaction('SHA256', SEGWIT_TX);
+      await localCopy(
+        fakeNode('SHA256', {
+          unspent: { [`${SEGWIT_TXID}:0`]: 480 },
+          blocks: { [SEGWIT_TXID]: 480 },
+          hexOf: { [SEGWIT_TXID]: SEGWIT_TX },
+        }),
+        SEGWIT_TXID,
+      );
+      restart();
+      expect(knownTransaction('SHA256', SEGWIT_TXID)?.blockhash).toEqual(
+        hashAt(480),
+      );
+    });
+
+    test('seeing the same transaction again adds nothing to the file', () => {
+      rememberTransaction('SHA256', SEGWIT_TX);
+      rememberTransaction('SHA256', SEGWIT_TX);
+      rememberTransaction('SHA256', SEGWIT_TX, hashAt(490));
+      rememberTransaction('SHA256', SEGWIT_TX);
+      const lines = fs.readFileSync(file, 'utf8').trim().split('\n');
+      expect(lines).toHaveLength(2);
+    });
+
+    test('keys come from the bytes; torn and malformed lines are skipped', () => {
+      fs.writeFileSync(
+        file,
+        [
+          JSON.stringify({ s: 'SHA256', h: GENESIS_TX, b: hashAt(0) }),
+          JSON.stringify({ s: 'SHA256', h: 'deadbeef' }),
+          JSON.stringify({ s: 'BTC' }),
+          '{"s":"SHA256","h":"0200',
+        ].join('\n'),
+      );
+      restart();
+      expect(knownTransaction('SHA256', GENESIS_TXID)?.blockhash).toEqual(
+        hashAt(0),
+      );
+      expect(knownTransaction('SHA256', 'deadbeef')).toBeUndefined();
+      // and remembering still appends after the torn line was skipped
+      rememberTransaction('SHA256', SEGWIT_TX);
+      restart();
+      expect(knownTransaction('SHA256', SEGWIT_TXID)?.hex).toEqual(SEGWIT_TX);
+    });
+
+    test('no file yet is an empty start, not an error', () => {
+      fs.rmSync(file, { force: true });
+      expect(() => restart()).not.toThrow();
+      expect(knownTransaction('SHA256', SEGWIT_TXID)).toBeUndefined();
     });
   });
 });

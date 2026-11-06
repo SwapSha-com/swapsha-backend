@@ -491,7 +491,8 @@ export const lockUserWithPreForkCoin = async (
     [
       [{ txid: coin.txid, vout: coin.vout }],
       [{ [swap.lockupDetails.lockupAddress]: swap.lockupDetails.amount / 1e8 }],
-      0,
+      // nLockTime 1: final on both chains. 0 lets the wallet use its tip.
+      1,
       { add_inputs: false, fee_rate: 10 },
     ],
     'prefork',

@@ -1,4 +1,5 @@
 import { sha256 } from '@noble/hashes/sha2.js';
+import fs from 'node:fs';
 import type ChainClient from '../chain/ChainClient';
 import type { IChainClient } from '../chain/ChainClient';
 import type { RawTransaction, Transaction } from '../consts/Types';
@@ -23,7 +24,8 @@ export class UnprovableError extends ChainIdentityError {}
  *
  *   - the wallet (`gettransaction`): SwapSha's own transactions
  *   - transactions SwapSha has already seen (the sidecar's relevant
- *     transactions and every broadcast), kept in memory with their block
+ *     transactions and every broadcast), kept with their block, in memory
+ *     and in the data dir so a restart does not forget them
  *   - an output that is still unspent (`gettxout` gives its height)
  *   - the block of a transaction that spends it: that block's undo data
  *     (`getblock <hash> 3`) gives the height every input was created at
@@ -120,10 +122,113 @@ type Known = { hex: string; blockhash?: string };
 const MAX_KNOWN_PER_CHAIN = 50_000;
 const known = new Map<string, Map<string, Known>>();
 
+/** Keep one transaction in memory; true when that changed what is kept */
+const keep = (
+  symbol: string,
+  txid: string,
+  hex: string,
+  blockhash?: string,
+): boolean => {
+  let chain = known.get(symbol);
+  if (chain === undefined) {
+    chain = new Map();
+    known.set(symbol, chain);
+  }
+  const before = chain.get(txid);
+  const kept = { hex, blockhash: blockhash ?? before?.blockhash };
+  chain.delete(txid);
+  chain.set(txid, kept);
+  if (chain.size > MAX_KNOWN_PER_CHAIN) {
+    chain.delete(chain.keys().next().value!);
+  }
+  return before?.hex !== kept.hex || before?.blockhash !== kept.blockhash;
+};
+
+/*
+ * On disk: `<datadir>/blake2b-seen.jsonl`, one line per change, appended
+ * synchronously so a crash right after a lockup was seen does not lose it.
+ * A later line for the same txid wins. The file is rewritten from memory
+ * once it holds many more lines than memory keeps.
+ */
+let seenFile: string | undefined;
+let seenLines = 0;
+
+const lineOf = (symbol: string, entry: Known) =>
+  `${JSON.stringify(
+    entry.blockhash === undefined
+      ? { s: symbol, h: entry.hex }
+      : { s: symbol, h: entry.hex, b: entry.blockhash },
+  )}\n`;
+
+const keptCount = () =>
+  [...known.values()].reduce((sum, chain) => sum + chain.size, 0);
+
+const compactSeenFile = () => {
+  if (seenFile === undefined) return;
+  const tmp = `${seenFile}.tmp`;
+  const lines: string[] = [];
+  for (const [symbol, chain] of known) {
+    for (const entry of chain.values()) lines.push(lineOf(symbol, entry));
+  }
+  fs.writeFileSync(tmp, lines.join(''), { mode: 0o600 });
+  fs.renameSync(tmp, seenFile);
+  seenLines = lines.length;
+};
+
+const persist = (symbol: string, entry: Known) => {
+  if (seenFile === undefined) return;
+  try {
+    fs.appendFileSync(seenFile, lineOf(symbol, entry), { mode: 0o600 });
+    seenLines++;
+    if (seenLines > 2 * keptCount() + 1_000) compactSeenFile();
+  } catch {
+    // Best effort, like the memory copy: a lookup that later finds nothing
+    // fails closed, as without txindex before
+  }
+};
+
+/**
+ * Keep the seen transactions in `file` (undefined: memory only). Loads what
+ * an earlier run kept. Every entry is checked again on load: its txid is
+ * computed from its bytes, so the file cannot attach bytes to another txid.
+ * A torn last line (a crash mid-write) is skipped.
+ */
+export const setSeenFile = (file: string | undefined) => {
+  seenFile = undefined;
+  seenLines = 0;
+  if (file === undefined) return;
+  let text = '';
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  for (const line of text.split('\n')) {
+    if (line.trim() === '') continue;
+    seenLines++;
+    try {
+      const { s, h, b } = JSON.parse(line) as {
+        s?: unknown;
+        h?: unknown;
+        b?: unknown;
+      };
+      if (typeof s !== 'string' || typeof h !== 'string') continue;
+      keep(s, txidOfHex(h), h, typeof b === 'string' ? b : undefined);
+    } catch {
+      // Torn or malformed line: skip it
+    }
+  }
+  // A torn last line has no newline; end it, or the next append joins it
+  if (text.length > 0 && !text.endsWith('\n')) {
+    fs.appendFileSync(file, '\n');
+  }
+  seenFile = file;
+};
+
 /**
  * Keep a transaction SwapSha has seen (a relevant transaction from the
  * sidecar, or one it broadcast), so a later lookup on a node without txindex
- * can still find it. Returns its txid.
+ * can still find it, also after a restart. Returns its txid.
  */
 export const rememberTransaction = (
   symbol: string,
@@ -131,16 +236,8 @@ export const rememberTransaction = (
   blockhash?: string,
 ): string => {
   const txid = txidOfHex(hex);
-  let chain = known.get(symbol);
-  if (chain === undefined) {
-    chain = new Map();
-    known.set(symbol, chain);
-  }
-  const before = chain.get(txid);
-  chain.delete(txid);
-  chain.set(txid, { hex, blockhash: blockhash ?? before?.blockhash });
-  if (chain.size > MAX_KNOWN_PER_CHAIN) {
-    chain.delete(chain.keys().next().value!);
+  if (keep(symbol, txid, hex, blockhash)) {
+    persist(symbol, known.get(symbol)!.get(txid)!);
   }
   return txid;
 };

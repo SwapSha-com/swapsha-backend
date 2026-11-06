@@ -76,6 +76,12 @@ const loadOrCreate = async (nodePort: number, wallet: string) => {
  * signed by the wallet the normal way. The coin is chosen so that it is still
  * unspent on `alsoOn` too, which makes the outcome there depend only on the
  * signature.
+ *
+ * nLockTime is set to 1. Left at 0, the wallet sets it to its own chain's tip
+ * (anti fee sniping), and checking the deposit on the other chain then means
+ * mining that chain up to this one's height: thousands of blocks once the
+ * Lightning suites have run, which mine SHA256 only (Nov 6: test B timed out
+ * mining BTC from 5565 towards 9437). Height 1 is final on both chains.
  */
 const sendPreForkCoin = async (
   nodePort: number,
@@ -115,6 +121,7 @@ const sendPreForkCoin = async (
         inputs: [{ txid: coin.txid, vout: coin.vout }],
         add_inputs: false,
         add_to_wallet: false,
+        locktime: 1,
       },
     ],
     'prefork',
@@ -242,10 +249,21 @@ run('D26: provider wallet guard, live', () => {
 
     await start();
     const swap = await createSwap('SHA256', 'BTC');
-    const lockId = await rpc<string>(
+    // nLockTime 1, final on both chains (see sendPreForkCoin)
+    const { txid: lockId } = await rpc<{ txid: string }>(
       SHA,
-      'sendtoaddress',
-      [swap.lockupDetails.lockupAddress, swap.lockupDetails.amount / 1e8],
+      'send',
+      [
+        [
+          {
+            [swap.lockupDetails.lockupAddress]: swap.lockupDetails.amount / 1e8,
+          },
+        ],
+        null,
+        'unset',
+        10,
+        { locktime: 1 },
+      ],
       'guard-user',
     );
     const lockHex = await rawTransaction(SHA, lockId);

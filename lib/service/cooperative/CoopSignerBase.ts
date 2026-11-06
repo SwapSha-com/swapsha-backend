@@ -136,7 +136,12 @@ abstract class CoopSignerBase<
 
     const tx = parseTransaction(
       wallet.type,
-      await chainClient.getRawTransaction(details.lockupTransactionId!),
+      await chainClient.getRawTransaction(details.lockupTransactionId!, {
+        vout:
+          toClaim.type === SwapType.Submarine
+            ? (toClaim as Swap).lockupTransactionVout
+            : (toClaim as ChainSwapInfo).receivingData.transactionVout,
+      }),
     );
 
     return constructClaimDetails(
