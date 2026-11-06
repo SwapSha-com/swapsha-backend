@@ -31,6 +31,8 @@ pub enum RpcParam<'a> {
     Str(&'a str),
     Int(i64),
     Float(f64),
+    /// SwapSha D38: `gettxout` takes include_mempool as a JSON bool
+    Bool(bool),
     Null,
 }
 
@@ -43,6 +45,7 @@ impl Serialize for RpcParam<'_> {
             RpcParam::Str(s) => serializer.serialize_str(s),
             RpcParam::Int(num) => serializer.serialize_i64(num),
             RpcParam::Float(num) => serializer.serialize_f64(num),
+            RpcParam::Bool(b) => serializer.serialize_bool(b),
             RpcParam::Null => serializer.serialize_none(),
         }
     }

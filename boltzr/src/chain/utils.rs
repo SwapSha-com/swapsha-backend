@@ -113,9 +113,26 @@ impl Transaction {
                         let client = client.clone();
 
                         async move {
-                            let input_tx = client
-                                .raw_transaction(&input.previous_output.txid.to_hex())
-                                .await?;
+                            let parent_id = input.previous_output.txid.to_hex();
+                            let input_tx = match client.raw_transaction(&parent_id).await {
+                                Ok(input_tx) => input_tx,
+                                // SwapSha D38: a node without txindex has only mempool
+                                // parents. A confirmed parent's output is still in the
+                                // UTXO set while this transaction is pending, which is
+                                // when the bumper prices it.
+                                Err(err) => {
+                                    return match client
+                                        .confirmed_output_value(
+                                            &parent_id,
+                                            input.previous_output.vout,
+                                        )
+                                        .await
+                                    {
+                                        Ok(Some(value)) => Ok(value),
+                                        _ => Err(err),
+                                    };
+                                }
+                            };
                             let input_tx: bitcoin::Transaction =
                                 bitcoin::consensus::deserialize(&hex::decode(input_tx)?)?;
 

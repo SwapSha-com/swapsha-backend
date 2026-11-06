@@ -96,7 +96,20 @@ impl UtxoNursery {
             .as_ref()
             .context(format!("no chain client for {}", symbol))?;
 
-        let raw_tx = chain_client.raw_transaction_verbose(tx_id).await?;
+        let raw_tx = chain_client
+            .raw_transaction_verbose(tx_id)
+            .await
+            .map_err(|err| {
+                // SwapSha D38: a node without txindex finds transactions by id
+                // in its mempool only
+                if err.to_string().contains("-txindex") {
+                    anyhow::anyhow!(
+                        "{err}. The {symbol} node has no txindex, so only mempool transactions can be checked by id; for a confirmed one, use rescan from its block height"
+                    )
+                } else {
+                    err
+                }
+            })?;
         let tx = Transaction::parse_hex(&chain_client.chain_type(), &raw_tx.hex)?;
 
         debug!(

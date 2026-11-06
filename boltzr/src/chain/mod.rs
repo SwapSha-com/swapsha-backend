@@ -139,6 +139,18 @@ pub trait Client: BaseClient {
     async fn raw_transaction(&self, tx_id: &str) -> Result<String>;
     async fn raw_transaction_verbose(&self, tx_id: &str) -> Result<types::RawTransactionVerbose>;
 
+    /// SwapSha D38: the value in satoshis of output `vout` of `tx_id` in the
+    /// confirmed UTXO set (`gettxout <txid> <vout> false`, so a spend that is
+    /// only in the mempool does not hide it). `None` when no confirmed
+    /// unspent output matches. A node without txindex cannot return the
+    /// confirmed parents of a pending transaction, but it can return this.
+    async fn confirmed_output_value(&self, _tx_id: &str, _vout: u32) -> Result<Option<u64>> {
+        Err(anyhow::anyhow!(
+            "{} client has no confirmed output lookup",
+            self.symbol()
+        ))
+    }
+
     async fn send_raw_transaction(&self, tx: &str) -> Result<String>;
 
     async fn list_unspent(&self, wallet: Option<&str>) -> Result<Vec<types::UnspentOutput>>;
@@ -167,4 +179,228 @@ pub trait Client: BaseClient {
 
     fn tx_receiver(&self) -> broadcast::Receiver<(Transactions, bool)>;
     fn block_receiver(&self) -> broadcast::Receiver<(u64, Block)>;
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use std::collections::HashMap;
+
+    const NO_INDEX: &str = "No such mempool transaction. Use -txindex or provide a block hash to enable blockchain transaction queries.";
+
+    /// SwapSha D38: a node without txindex. It returns a parent by id only
+    /// from its mempool; of a confirmed parent it knows only the outputs that
+    /// are still unspent in a block.
+    struct PrunedNode {
+        mempool: HashMap<bitcoin::Txid, String>,
+        confirmed_outputs: HashMap<(bitcoin::Txid, u32), u64>,
+    }
+
+    #[async_trait]
+    impl BaseClient for PrunedNode {
+        fn kind(&self) -> String {
+            "PrunedNode".to_string()
+        }
+
+        fn symbol(&self) -> String {
+            "SHA256".to_string()
+        }
+
+        async fn connect(&mut self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[async_trait]
+    impl Client for PrunedNode {
+        fn chain_type(&self) -> Type {
+            Type::Bitcoin
+        }
+
+        fn network(&self) -> Network {
+            Network::Regtest
+        }
+
+        async fn rescan(
+            &self,
+            _chain_tip_repo: Arc<dyn ChainTipHelper + Send + Sync>,
+            _start_height: u64,
+            _relevant_inputs: &HashSet<Outpoint>,
+            _relevant_outputs: &HashSet<Vec<u8>>,
+        ) -> Result<u64> {
+            unimplemented!()
+        }
+
+        async fn scan_mempool(
+            &self,
+            _relevant_inputs: &HashSet<Outpoint>,
+            _relevant_outputs: &HashSet<Vec<u8>>,
+        ) -> Result<()> {
+            unimplemented!()
+        }
+
+        async fn network_info(&self) -> Result<types::NetworkInfo> {
+            unimplemented!()
+        }
+
+        async fn blockchain_info(&self) -> Result<types::BlockchainInfo> {
+            unimplemented!()
+        }
+
+        async fn estimate_fee(&self) -> Result<f64> {
+            unimplemented!()
+        }
+
+        async fn raw_transaction(&self, tx_id: &str) -> Result<String> {
+            self.mempool
+                .get(&tx_id.parse::<bitcoin::Txid>()?)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!(NO_INDEX))
+        }
+
+        async fn raw_transaction_verbose(
+            &self,
+            _tx_id: &str,
+        ) -> Result<types::RawTransactionVerbose> {
+            unimplemented!()
+        }
+
+        async fn confirmed_output_value(&self, tx_id: &str, vout: u32) -> Result<Option<u64>> {
+            Ok(self
+                .confirmed_outputs
+                .get(&(tx_id.parse::<bitcoin::Txid>()?, vout))
+                .copied())
+        }
+
+        async fn send_raw_transaction(&self, _tx: &str) -> Result<String> {
+            unimplemented!()
+        }
+
+        async fn list_unspent(&self, _wallet: Option<&str>) -> Result<Vec<types::UnspentOutput>> {
+            unimplemented!()
+        }
+
+        async fn get_new_address(
+            &self,
+            _wallet: Option<&str>,
+            _label: &str,
+            _address_type: Option<&str>,
+        ) -> Result<String> {
+            unimplemented!()
+        }
+
+        async fn dump_blinding_key(&self, _wallet: Option<&str>, _address: &str) -> Result<String> {
+            unimplemented!()
+        }
+
+        async fn sign_raw_transaction_with_wallet(
+            &self,
+            _wallet: Option<&str>,
+            _tx: &str,
+        ) -> Result<types::SignRawTransactionResponse> {
+            unimplemented!()
+        }
+
+        async fn request_wallet(
+            &self,
+            _wallet: Option<&str>,
+            _method: &str,
+            _params: Option<&[types::RpcParam<'_>]>,
+        ) -> Result<serde_json::Value> {
+            unimplemented!()
+        }
+
+        fn zero_conf_safe(&self, _transaction: &Transaction) -> oneshot::Receiver<bool> {
+            unimplemented!()
+        }
+
+        fn tx_receiver(&self) -> broadcast::Receiver<(Transactions, bool)> {
+            unimplemented!()
+        }
+
+        fn block_receiver(&self) -> broadcast::Receiver<(u64, Block)> {
+            unimplemented!()
+        }
+    }
+
+    fn input(previous_output: bitcoin::OutPoint) -> bitcoin::TxIn {
+        bitcoin::TxIn {
+            previous_output,
+            script_sig: bitcoin::ScriptBuf::new(),
+            sequence: bitcoin::Sequence::ENABLE_RBF_NO_LOCKTIME,
+            witness: bitcoin::Witness::new(),
+        }
+    }
+
+    /// A transaction with one output of `value`. It has one (null) input, so
+    /// its serialization cannot be mistaken for a segwit marker.
+    fn parent(value: u64) -> bitcoin::Transaction {
+        bitcoin::Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: vec![input(bitcoin::OutPoint::null())],
+            output: vec![bitcoin::TxOut {
+                value: bitcoin::Amount::from_sat(value),
+                script_pubkey: bitcoin::ScriptBuf::new(),
+            }],
+        }
+    }
+
+    /// Spends output 0 of each parent into one output of `out` sat
+    fn spend(parents: &[&bitcoin::Transaction], out: u64) -> Transaction {
+        Transaction::Bitcoin(bitcoin::Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: bitcoin::absolute::LockTime::ZERO,
+            input: parents
+                .iter()
+                .map(|p| {
+                    input(bitcoin::OutPoint {
+                        txid: p.compute_txid(),
+                        vout: 0,
+                    })
+                })
+                .collect(),
+            output: vec![bitcoin::TxOut {
+                value: bitcoin::Amount::from_sat(out),
+                script_pubkey: bitcoin::ScriptBuf::new(),
+            }],
+        })
+    }
+
+    #[tokio::test]
+    async fn calculate_fee_values_confirmed_parents_without_txindex() {
+        let unconfirmed = parent(50_000);
+        let confirmed = parent(70_000);
+        let node = PrunedNode {
+            mempool: HashMap::from([(
+                unconfirmed.compute_txid(),
+                hex::encode(bitcoin::consensus::serialize(&unconfirmed)),
+            )]),
+            confirmed_outputs: HashMap::from([((confirmed.compute_txid(), 0), 70_000)]),
+        };
+        let client = Arc::new(node) as Arc<dyn Client + Send + Sync>;
+
+        let fee = spend(&[&unconfirmed, &confirmed], 119_000)
+            .calculate_fee(&client)
+            .await
+            .unwrap();
+        assert_eq!(fee, 1_000);
+    }
+
+    #[tokio::test]
+    async fn calculate_fee_fails_when_no_source_has_the_parent() {
+        let confirmed = parent(70_000);
+        let node = PrunedNode {
+            mempool: HashMap::new(),
+            // spent in a block: gettxout has nothing
+            confirmed_outputs: HashMap::new(),
+        };
+        let client = Arc::new(node) as Arc<dyn Client + Send + Sync>;
+
+        let err = spend(&[&confirmed], 69_000)
+            .calculate_fee(&client)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("-txindex"), "{err}");
+    }
 }

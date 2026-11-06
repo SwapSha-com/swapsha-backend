@@ -76,6 +76,12 @@ case "${1:-run}" in
   run)
     check_nodes
     [ -x target/debug/boltzr ] || { echo "Sidecar not built. Run: cargo build -p boltzr"; exit 1; }
+    # D38: cargo lists the sources the sidecar was built from in boltzr.d. One
+    # of them newer than the binary is a change not built yet.
+    newer=$(tr ' ' '\n' < target/debug/boltzr.d | tail -n +2 | while read -r f; do
+      if [ -n "$f" ] && [ "$f" -nt target/debug/boltzr ]; then echo "$f"; break; fi
+    done || true)
+    [ -z "$newer" ] || { echo "Sidecar is older than ${newer#"$PWD"/}. Run: cargo build -p boltzr"; exit 1; }
     if curl -s -o /dev/null http://127.0.0.1:9001/v2/swap/chain; then
       echo "The regtest backend is running on 9001. Stop it first (Ctrl+C in its window)."; exit 1
     fi

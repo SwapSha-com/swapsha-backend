@@ -62,6 +62,12 @@ case "${1:-run}" in
   run)
     check_nodes
     [ -x target/debug/boltzr ] || { echo "Sidecar not built. Run: cargo build -p boltzr"; exit 1; }
+    # D38: cargo lists the sources the sidecar was built from in boltzr.d. One
+    # of them newer than the binary is a change not built yet.
+    newer=$(tr ' ' '\n' < target/debug/boltzr.d | tail -n +2 | while read -r f; do
+      if [ -n "$f" ] && [ "$f" -nt target/debug/boltzr ]; then echo "$f"; break; fi
+    done || true)
+    [ -z "$newer" ] || { echo "Sidecar is older than ${newer#"$PWD"/}. Run: cargo build -p boltzr"; exit 1; }
     start_db
     npm run compile:typescript
     mkdir -p "$DATA"

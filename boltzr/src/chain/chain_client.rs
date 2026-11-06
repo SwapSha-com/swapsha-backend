@@ -686,6 +686,32 @@ impl Client for ChainClient {
             .await
     }
 
+    async fn confirmed_output_value(&self, tx_id: &str, vout: u32) -> anyhow::Result<Option<u64>> {
+        #[derive(serde::Deserialize, Debug)]
+        struct ConfirmedOutput {
+            value: f64,
+        }
+
+        match self
+            .client
+            .request::<ConfirmedOutput>(
+                "gettxout",
+                Some(&[
+                    RpcParam::Str(tx_id),
+                    RpcParam::Int(i64::from(vout)),
+                    RpcParam::Bool(false),
+                ]),
+            )
+            .await
+        {
+            // At most 21e14 sat, well inside the exact integer range of f64
+            Ok(output) => Ok(Some((output.value * 100_000_000.0).round() as u64)),
+            // null: spent in a block, or never existed
+            Err(err) if err.to_string() == "no result" => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
     async fn send_raw_transaction(&self, tx: &str) -> anyhow::Result<String> {
         self.client
             .request::<String>("sendrawtransaction", Some(&[RpcParam::Str(tx)]))

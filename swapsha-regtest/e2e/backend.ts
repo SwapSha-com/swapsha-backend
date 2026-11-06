@@ -140,13 +140,40 @@ export const freshConfig = () => {
  * Crash.spec ran the build from patch 0037 with 0040 applied, and failed for
  * a fix it never loaded. `compile:typescript` writes the commit it built from
  * into dist/lib/Version.js. Refuse to start when lib/ has changed since then.
+ *
+ * The same for the sidecar boltzd starts (target/debug/boltzr), which only
+ * `cargo build -p boltzr` rebuilds. Cargo lists every source file the binary
+ * was built from in boltzr.d next to it, and rebuilds by file times, so one
+ * of those files being newer than the binary is a change not built yet.
  */
 export const checkBuild = () => {
-  const fail = (why: string): never => {
-    throw new Error(
-      `${why}. Run npm run compile:typescript, then the suite again.`,
-    );
+  const fail = (why: string, fix = 'npm run compile:typescript'): never => {
+    throw new Error(`${why}. Run ${fix}, then the suite again.`);
   };
+
+  const sidecar = 'target/debug/boltzr';
+  let sources: string[] = [];
+  try {
+    const listed = fs.readFileSync(`${sidecar}.d`, 'utf8');
+    sources = listed
+      .slice(listed.indexOf(': ') + 2)
+      .split(/(?<!\\)\s+/)
+      .filter((f) => f !== '')
+      .map((f) => f.replace(/\\ /g, ' '));
+  } catch {
+    return fail(`no sidecar build in ${sidecar}`, 'cargo build -p boltzr');
+  }
+  const sidecarBuilt = fs.statSync(sidecar).mtimeMs;
+  const newer = sources.find(
+    (f) => fs.existsSync(f) && fs.statSync(f).mtimeMs > sidecarBuilt,
+  );
+  if (newer !== undefined) {
+    return fail(
+      `${sidecar} is older than ${newer.replace(`${process.cwd()}/`, '')}`,
+      'cargo build -p boltzr',
+    );
+  }
+
   let version = '';
   try {
     version = fs.readFileSync('dist/lib/Version.js', 'utf8');
