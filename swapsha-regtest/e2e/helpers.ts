@@ -369,14 +369,37 @@ export const userClaim = async (
   return claim;
 };
 
+/**
+ * A transaction's hex. D38 V2 runs the SHA256 regtest node pruned with no
+ * txindex, where getrawtransaction only answers for the mempool; the test
+ * wallets still have every transaction they sent or received.
+ */
+export const rawTransaction = async (
+  nodePort: number,
+  txid: string,
+): Promise<string> => {
+  try {
+    return await rpc<string>(nodePort, 'getrawtransaction', [txid], '');
+  } catch (error) {
+    if (!/-txindex/.test((error as Error).message)) throw error;
+  }
+  for (const wallet of ['user', 'swapsha', 'prefork', 'guard-user']) {
+    try {
+      return (
+        await rpc<{ hex: string }>(nodePort, 'gettransaction', [txid], wallet)
+      ).hex;
+    } catch {
+      // Not this wallet's, or not loaded
+    }
+  }
+  throw new Error(
+    `${chainName(nodePort)}: ${txid} is not in the mempool or any test wallet (pruned node, no txindex)`,
+  );
+};
+
 /** User refunds their own lockup on `swap.from` via the script path. */
 export const userRefund = async (swap: CreatedSwap, lockupId: string) => {
-  const raw = await rpc<string>(
-    port(swap.from),
-    'getrawtransaction',
-    [lockupId],
-    '',
-  );
+  const raw = await rawTransaction(port(swap.from), lockupId);
   const refund = constructRefundTransaction(
     [
       taprootUtxo(

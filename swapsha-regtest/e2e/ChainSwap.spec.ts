@@ -36,6 +36,7 @@ import {
   mineTo,
   parseTx,
   port,
+  rawTransaction,
   rpc,
   serverLockup,
   userClaim,
@@ -82,12 +83,7 @@ describe('B5: chain swaps between Spamcoin (SHA256, the SHA-256 chain) and BTC (
   test('BTC -> SHA256 completes, and the backend claims the BTC with 0x21', async () => {
     const swap = await createSwap('BTC', 'SHA256');
     const userLock = await lockUser(swap);
-    const userLockHex = await rpc<string>(
-      BLAKE,
-      'getrawtransaction',
-      [userLock],
-      '',
-    );
+    const userLockHex = await rawTransaction(BLAKE, userLock);
     console.log(
       `user BTC lockup ${userLock}: ${describeSigs(parseTx(userLockHex))}`,
     );

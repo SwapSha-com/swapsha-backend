@@ -45,6 +45,7 @@ import {
   height,
   lockUser,
   mine,
+  rawTransaction,
   rpc,
   serverLockup,
   waitFor,
@@ -247,7 +248,7 @@ run('D26: provider wallet guard, live', () => {
       [swap.lockupDetails.lockupAddress, swap.lockupDetails.amount / 1e8],
       'guard-user',
     );
-    const lockHex = await rpc<string>(SHA, 'getrawtransaction', [lockId], '');
+    const lockHex = await rawTransaction(SHA, lockId);
     // What the first D18 check saw: inputs missing on BTC, so "safe"
     const onXbt = await acceptWhenFinal(BLAKE, lockHex);
     console.log(`lockup ${lockId} on BTC: ${JSON.stringify(onXbt)}`);
