@@ -58,6 +58,21 @@ type ChainConfig = {
    */
   seedAccount?: number;
 
+  /**
+   * SwapSha D40: where the seed wallet setup reaches the node, when not at
+   * host and port. For a node behind an RPC proxy that logs failed requests
+   * with their parameters (the Companion's btc-rpc-proxy): the import that
+   * carries the private descriptors then goes to bitcoind directly.
+   */
+  seedWalletRpc?: { host: string; port: number };
+
+  /**
+   * SwapSha: ZeroMQ addresses to use instead of the ones the node reports,
+   * for a node reached at other ports than its own (the StartOS bridge).
+   * Read by the sidecar.
+   */
+  zmq?: { rawtx?: string; rawblock?: string };
+
   // API endpoint of a MempoolSpace instance running on the chain of the configured client
   // Comma separated for multiple endpoints
   mempoolSpace?: string;

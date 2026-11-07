@@ -20,7 +20,11 @@ import {
 import { setPaceBounds } from './blake2b/ChainPace';
 import { verifyLightningIdentity } from './blake2b/LightningIdentity';
 import { setMainnetLock, swapsTurnedDownReason } from './blake2b/MainnetLock';
-import { bip32VersionsFor, ensureSeedWallet } from './blake2b/NodeWallets';
+import {
+  bip32VersionsFor,
+  directSeedWalletNode,
+  ensureSeedWallet,
+} from './blake2b/NodeWallets';
 import {
   DEFAULT_CONFLICT_DEPTH,
   MAINNET_CONFLICT_DEPTH,
@@ -593,8 +597,19 @@ class Boltz {
         ),
       );
 
+      // The Companion's RPC proxy logs failed requests with their
+      // parameters, so the import goes to bitcoind directly when configured
+      const { seedWalletRpc } = currencyConfig.chain;
+      const node =
+        seedWalletRpc === undefined
+          ? client
+          : directSeedWalletNode(this.logger, currencyConfig.symbol, {
+              ...currencyConfig.chain,
+              seedWalletRpc,
+            });
+
       this.logger.info(
-        await ensureSeedWallet(client, {
+        await ensureSeedWallet(node, {
           wallet: currencyConfig.chain.wallet,
           account,
           network: currencyConfig.network,

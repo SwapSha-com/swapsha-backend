@@ -5,10 +5,22 @@ import {
   bip32VersionsFor,
   coinTypeFor,
   descriptorChecksum,
+  directSeedWalletNode,
   ensureSeedWallet,
   redactKeys,
   seedWalletDescriptors,
 } from '../../../lib/blake2b/NodeWallets';
+
+const mockRequest = jest.fn().mockResolvedValue('ok');
+const mockRpcClient = jest.fn().mockImplementation(() => ({
+  request: mockRequest,
+}));
+jest.mock('../../../lib/chain/RpcClient', () => ({
+  __esModule: true,
+  default: function (...args: unknown[]) {
+    return mockRpcClient(...args);
+  },
+}));
 
 // BIP84 and BIP86 test vectors use this mnemonic (master fingerprint 73c5da0a)
 const MNEMONIC =
@@ -329,6 +341,40 @@ describe('NodeWallets (D40)', () => {
     const tprv = master('regtest').privateExtendedKey;
     expect(redactKeys(`a ${xprv} b ${tprv} c`)).toEqual(
       'a <private key> b <private key> c',
+    );
+  });
+
+  test('a direct connection goes to seedWalletRpc with the chain login', async () => {
+    const logger = {} as any;
+    const node = directSeedWalletNode(logger, 'SHA256', {
+      host: '10.0.3.1',
+      port: 18432,
+      user: 'swapsha_test',
+      password: 'secret',
+      wallet: 'swapsha',
+      seedWalletRpc: { host: '10.0.3.1', port: 18435 },
+    });
+
+    expect(mockRpcClient).toHaveBeenCalledWith(
+      logger,
+      'SHA256',
+      expect.objectContaining({
+        host: '10.0.3.1',
+        port: 18435,
+        user: 'swapsha_test',
+        password: 'secret',
+        wallet: 'swapsha',
+      }),
+    );
+
+    await node.rpc('listwallets');
+    await node.walletRpc('listdescriptors', [false]);
+    expect(mockRequest).toHaveBeenNthCalledWith(1, 'listwallets', undefined);
+    expect(mockRequest).toHaveBeenNthCalledWith(
+      2,
+      'listdescriptors',
+      [false],
+      true,
     );
   });
 

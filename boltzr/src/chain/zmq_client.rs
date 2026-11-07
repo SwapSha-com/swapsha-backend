@@ -41,10 +41,34 @@ impl ZmqClient {
     }
 
     pub async fn connect(&self, notifications: &[ZmqNotification]) -> anyhow::Result<()> {
-        self.subscribe_raw_tx(notifications).await?;
-        self.subscribe_raw_block(notifications).await?;
+        let notifications = self.apply_overrides(notifications);
+        self.subscribe_raw_tx(&notifications).await?;
+        self.subscribe_raw_block(&notifications).await?;
 
         Ok(())
+    }
+
+    /// SwapSha: the addresses from the `zmq` config, where set, in place of
+    /// the ones the node reports. The node must still report each one, which
+    /// shows it has ZeroMQ on.
+    fn apply_overrides(&self, notifications: &[ZmqNotification]) -> Vec<ZmqNotification> {
+        notifications
+            .iter()
+            .map(|notification| {
+                let overridden = self.config.zmq.as_ref().and_then(|zmq| {
+                    match notification.notification_type.as_str() {
+                        "pubrawtx" => zmq.rawtx.clone(),
+                        "pubrawblock" => zmq.rawblock.clone(),
+                        _ => None,
+                    }
+                });
+
+                ZmqNotification {
+                    notification_type: notification.notification_type.clone(),
+                    address: overridden.unwrap_or_else(|| notification.address.clone()),
+                }
+            })
+            .collect()
     }
 
     async fn subscribe_raw_tx(&self, notifications: &[ZmqNotification]) -> anyhow::Result<()> {
@@ -255,6 +279,7 @@ impl ZmqClient {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::chain::ZmqOverrides;
     use std::sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -382,6 +407,85 @@ mod test {
             zmq_client.replace_zmq_address_wildcard("0.0.0.0:28332"),
             "127.0.0.1:28332"
         );
+    }
+
+    #[test]
+    fn test_apply_overrides() {
+        let notifications = vec![
+            ZmqNotification {
+                notification_type: "pubrawtx".to_string(),
+                address: "tcp://0.0.0.0:28333".to_string(),
+            },
+            ZmqNotification {
+                notification_type: "pubrawblock".to_string(),
+                address: "tcp://0.0.0.0:28332".to_string(),
+            },
+            ZmqNotification {
+                notification_type: "pubhashblock".to_string(),
+                address: "tcp://0.0.0.0:28332".to_string(),
+            },
+        ];
+
+        let without = ZmqClient::new(
+            Type::Bitcoin,
+            Network::Mainnet,
+            Config {
+                host: "10.0.3.1".to_string(),
+                port: 18432,
+                ..Default::default()
+            },
+        );
+        assert_eq!(without.apply_overrides(&notifications), notifications);
+
+        let with = ZmqClient::new(
+            Type::Bitcoin,
+            Network::Mainnet,
+            Config {
+                host: "10.0.3.1".to_string(),
+                port: 18432,
+                zmq: Some(ZmqOverrides {
+                    rawtx: Some("tcp://10.0.3.1:18533".to_string()),
+                    rawblock: Some("tcp://10.0.3.1:18532".to_string()),
+                }),
+                ..Default::default()
+            },
+        );
+        let applied = with.apply_overrides(&notifications);
+        assert_eq!(applied[0].address, "tcp://10.0.3.1:18533");
+        assert_eq!(applied[1].address, "tcp://10.0.3.1:18532");
+        assert_eq!(applied[2].address, "tcp://0.0.0.0:28332");
+        assert_eq!(
+            with.replace_zmq_address_wildcard(&applied[0].address),
+            "tcp://10.0.3.1:18533"
+        );
+    }
+
+    #[test]
+    fn test_zmq_overrides_from_config_file() {
+        let config: Config = toml::from_str(
+            r#"
+host = "10.0.3.1"
+port = 18432
+zmq = { rawtx = "tcp://10.0.3.1:18533", rawblock = "tcp://10.0.3.1:18532" }
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.zmq,
+            Some(ZmqOverrides {
+                rawtx: Some("tcp://10.0.3.1:18533".to_string()),
+                rawblock: Some("tcp://10.0.3.1:18532".to_string()),
+            })
+        );
+
+        let config: Config = toml::from_str(
+            r#"
+host = "127.0.0.1"
+port = 18443
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.zmq, None);
     }
 
     #[test]

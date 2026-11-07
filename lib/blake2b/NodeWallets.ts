@@ -1,5 +1,8 @@
 import type { HDKey } from '@scure/bip32';
+import type { ChainConfig } from '../Config';
+import type Logger from '../Logger';
 import type ChainClient from '../chain/ChainClient';
+import RpcClient from '../chain/RpcClient';
 import { networkKind } from './ChainIdentity';
 
 /**
@@ -16,6 +19,31 @@ import { networkKind } from './ChainIdentity';
  */
 
 type SeedWalletNode = Pick<ChainClient, 'symbol' | 'rpc' | 'walletRpc'>;
+
+/**
+ * A separate connection for the seed wallet setup, to `seedWalletRpc` with
+ * the chain's credentials and wallet name (the Companion's bitcoind, past its
+ * RPC proxy).
+ */
+export const directSeedWalletNode = (
+  logger: Logger,
+  symbol: string,
+  chain: ChainConfig & { seedWalletRpc: { host: string; port: number } },
+): SeedWalletNode => {
+  const client = new RpcClient(logger, symbol, {
+    ...chain,
+    host: chain.seedWalletRpc.host,
+    port: chain.seedWalletRpc.port,
+  });
+
+  return {
+    symbol,
+    rpc: <T>(method: string, params?: unknown[]) =>
+      client.request<T>(method, params as any[]),
+    walletRpc: <T>(method: string, params?: unknown[]) =>
+      client.request<T>(method, params as any[], true),
+  };
+};
 
 type ListedDescriptor = {
   desc: string;

@@ -75,9 +75,23 @@ pub struct Config {
 
     wallet: Option<String>,
 
+    /// SwapSha: ZeroMQ addresses to use instead of the ones the node reports,
+    /// for a node reached at other ports than its own (the StartOS bridge)
+    zmq: Option<ZmqOverrides>,
+
     /// Minimum fee rate in sat/vbyte used as floor for fee estimation
     #[serde(rename = "feeFloor")]
     pub fee_floor: Option<f64>,
+}
+
+/// SwapSha: ZeroMQ addresses that replace the ones from getzmqnotifications.
+/// On StartOS a dependency is reached through the host bridge at ports the
+/// OS assigns, while the node reports its own (tcp://0.0.0.0:28332), and the
+/// sidecar would otherwise put the RPC host in front of the node's port.
+#[derive(Deserialize, Serialize, PartialEq, Debug, Clone, Default)]
+pub struct ZmqOverrides {
+    pub rawtx: Option<String>,
+    pub rawblock: Option<String>,
 }
 
 impl Config {
