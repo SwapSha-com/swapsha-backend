@@ -30,6 +30,21 @@ describe('VersionCheck', () => {
     ).not.toThrow();
   });
 
+  test.each([
+    ['Knots 29.5 (BLAKE2b, Bitcoin Knots on StartOS)', 290500],
+    ['Knots-sha256 31.2 (the SHA-256 Companion)', 310200],
+  ])('accepts SwapSha node %s', (_, version) => {
+    expect(() =>
+      VersionCheck.checkChainClientVersion('BTC', version),
+    ).not.toThrow();
+  });
+
+  test('still refuses a chain client newer than 31.2', () => {
+    expect(() =>
+      VersionCheck.checkChainClientVersion('SHA256', 310300),
+    ).toThrow('unsupported SHA256 Core version: 310300');
+  });
+
   test('should check version of LND clients', () => {
     const symbol = 'BTC';
     const limits = VersionCheck['versionLimits'][LndClient.serviceName];

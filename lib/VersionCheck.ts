@@ -78,7 +78,9 @@ class VersionCheck {
   > = {
     [ChainClient.serviceName]: {
       minimal: 230000,
-      maximal: 310100,
+      // SwapSha: the SHA-256 Companion runs Knots-sha256 31.2
+      // (31.2.knots-sha256.20261031, CLIENT_VERSION 310200); Boltz stops at 31.1
+      maximal: 310200,
     },
     [ClnClient.serviceName]: {
       minimal: '26.04',
