@@ -54,7 +54,18 @@ impl Serialize for RpcParam<'_> {
 #[derive(Serialize)]
 pub struct RpcRequest<'a> {
     pub method: &'a str,
+    /// SwapSha: always sent, `[]` when there are none. btc-rpc-proxy (the
+    /// SHA-256 Companion's RPC port on StartOS) refuses a request without
+    /// params, and a `null` one; bitcoind takes all three.
+    #[serde(serialize_with = "params_or_empty")]
     pub params: Option<&'a [RpcParam<'a>]>,
+}
+
+fn params_or_empty<S: Serializer>(
+    params: &Option<&[RpcParam<'_>]>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    params.unwrap_or(&[]).serialize(serializer)
 }
 
 #[derive(Deserialize, Debug)]
@@ -130,4 +141,29 @@ pub struct UnspentOutput {
 pub struct SignRawTransactionResponse {
     pub hex: String,
     pub complete: bool,
+}
+
+#[cfg(test)]
+mod rpc_request_test {
+    use super::*;
+
+    #[test]
+    fn test_rpc_request_always_sends_params() {
+        assert_eq!(
+            serde_json::to_string(&RpcRequest {
+                method: "getblockchaininfo",
+                params: None,
+            })
+            .unwrap(),
+            r#"{"method":"getblockchaininfo","params":[]}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&RpcRequest {
+                method: "getblockhash",
+                params: Some(&[RpcParam::Int(1)]),
+            })
+            .unwrap(),
+            r#"{"method":"getblockhash","params":[1]}"#
+        );
+    }
 }

@@ -124,7 +124,10 @@ class RpcClient {
     return new Promise<T>((resolve, reject) => {
       const serializedRequest = JSON.stringify({
         method,
-        params,
+        // SwapSha: always sent, [] when there are none. btc-rpc-proxy (the
+        // SHA-256 Companion's RPC port on StartOS) refuses a request without
+        // params; bitcoind takes both.
+        params: params ?? [],
       });
 
       const request = http.request(

@@ -115,6 +115,29 @@ describe('RpcClient', () => {
     });
   });
 
+  test.each([
+    ['getblockchaininfo', undefined, []],
+    ['getblockhash', [1], [1]],
+  ])(
+    'sends params for %s, [] when there are none (btc-rpc-proxy needs them)',
+    async (method, params, sent) => {
+      mockHttpResponse(200, JSON.stringify({ result: 1 }));
+
+      const client = new RpcClient(
+        Logger.disabledLogger,
+        'BTC',
+        baseConfig as any,
+      );
+      await expect(client.request(method, params)).resolves.toEqual(1);
+
+      const request = jest.mocked(http.request).mock.results[0].value;
+      expect(JSON.parse(request.write.mock.calls[0][0])).toEqual({
+        method,
+        params: sent,
+      });
+    },
+  );
+
   test('should reject responses without a result field', async () => {
     mockHttpResponse(200, JSON.stringify({}));
 
