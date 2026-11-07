@@ -237,6 +237,17 @@ class WalletManager {
     }
   };
 
+  /**
+   * SwapSha D40: the master key with a network's BIP32 versions, for the
+   * provider wallets on the nodes (xprv on mainnet, tprv on test networks;
+   * the swap keys use masterNode).
+   */
+  public nodeWalletMaster = (versions: {
+    private: number;
+    public: number;
+  }): HDKey =>
+    HDKey.fromMasterSeed(mnemonicToSeedSync(this.mnemonic), versions);
+
   private static deriveFromMnemonic = (mnemonic: string) => {
     const seed = mnemonicToSeedSync(mnemonic);
     return {

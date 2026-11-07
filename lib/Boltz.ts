@@ -20,6 +20,7 @@ import {
 import { setPaceBounds } from './blake2b/ChainPace';
 import { verifyLightningIdentity } from './blake2b/LightningIdentity';
 import { setMainnetLock, swapsTurnedDownReason } from './blake2b/MainnetLock';
+import { bip32VersionsFor, ensureSeedWallet } from './blake2b/NodeWallets';
 import {
   DEFAULT_CONFLICT_DEPTH,
   MAINNET_CONFLICT_DEPTH,
@@ -325,6 +326,10 @@ class Boltz {
       await this.db.init();
       await this.redis?.connect();
 
+      // SwapSha D40: the provider wallets on the nodes come from seed.dat.
+      // Before the wallet manager, which reads their balances.
+      await this.ensureSeedWallets();
+
       // To initialize the key provider before starting the sidecar
       await this.walletManager.init(this.config.currencies);
 
@@ -563,6 +568,40 @@ class Boltz {
     } catch (error) {
       this.logger.error(
         `Error reconciling ${arkNode.serviceName()} ${arkNode.symbol} startup subscriptions: ${formatError(error)}`,
+      );
+    }
+  };
+
+  /**
+   * SwapSha D40: creates, loads or checks each provider wallet that has a
+   * seedAccount. The chain identity check runs first, so no wallet is made
+   * on the wrong chain's node; connectChainClient runs it again later.
+   */
+  private ensureSeedWallets = async () => {
+    for (const currencyConfig of this.config.currencies) {
+      const account = currencyConfig.chain?.seedAccount;
+      const client = this.currencies.get(currencyConfig.symbol)?.chainClient;
+      if (account === undefined || !(client instanceof ChainClient)) {
+        continue;
+      }
+
+      this.logger.info(
+        await verifyChainIdentity(
+          client,
+          currencyConfig.blake2b === true,
+          currencyConfig.network,
+        ),
+      );
+
+      this.logger.info(
+        await ensureSeedWallet(client, {
+          wallet: currencyConfig.chain.wallet,
+          account,
+          network: currencyConfig.network,
+          master: this.walletManager.nodeWalletMaster(
+            bip32VersionsFor(currencyConfig.network),
+          ),
+        }),
       );
     }
   };

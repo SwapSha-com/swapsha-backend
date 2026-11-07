@@ -1,10 +1,10 @@
-import type { PaceBounds } from './blake2b/ChainPace';
 import toml from '@iarna/toml';
 import fs from 'fs';
 import path from 'path';
 import type { Arguments } from 'yargs';
 import type { PrometheusConfig } from './Prometheus';
 import { deepMerge, getServiceDataDir, resolveHome } from './Utils';
+import type { PaceBounds } from './blake2b/ChainPace';
 import type { ArkConfig } from './chain/ArkClient';
 import { Network } from './consts/Enums';
 import Errors from './consts/Errors';
@@ -49,6 +49,14 @@ type ChainConfig = {
   password?: string;
 
   wallet?: string;
+
+  /**
+   * SwapSha D40: `wallet` is SwapSha's provider wallet, derived from seed.dat
+   * at this BIP84/BIP86 account (BTC 0, SHA-256 1). At startup the backend
+   * creates it if missing and refuses to start if it holds other keys.
+   * Leave out for a wallet managed by hand (regtest, testnet4).
+   */
+  seedAccount?: number;
 
   // API endpoint of a MempoolSpace instance running on the chain of the configured client
   // Comma separated for multiple endpoints
