@@ -19,6 +19,7 @@ import {
 } from './blake2b/ChainIdentity';
 import { setPaceBounds } from './blake2b/ChainPace';
 import { verifyLightningIdentity } from './blake2b/LightningIdentity';
+import { setMainnetLock, swapsTurnedDownReason } from './blake2b/MainnetLock';
 import {
   DEFAULT_CONFLICT_DEPTH,
   MAINNET_CONFLICT_DEPTH,
@@ -213,6 +214,14 @@ class Boltz {
     this.routingFee = new RoutingFee(this.logger, this.config.routing);
 
     this.currencies = this.parseCurrencies();
+
+    // SwapSha D7, D37: on mainnet the startup checks run, new swaps do not
+    const mainnetLock = setMainnetLock(this.config.currencies);
+    if (mainnetLock !== undefined) {
+      this.logger.warn(
+        `${mainnetLock}. The startup checks still run against the nodes.`,
+      );
+    }
 
     const walletCurrencies = Array.from(this.currencies.values());
 
@@ -472,6 +481,11 @@ class Boltz {
 
       await this.grpcServer.listen();
       await this.api.init();
+
+      const turnedDown = swapsTurnedDownReason();
+      if (turnedDown !== undefined) {
+        this.logger.warn(`Startup checks passed. ${turnedDown}`);
+      }
 
       // Rescan chains after everything else was initialized to avoid race conditions
       if (chainTips.length === 0) {

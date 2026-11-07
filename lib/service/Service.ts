@@ -1,4 +1,3 @@
-import { staleChainReason } from '../blake2b/ChainPace';
 import type { Transaction } from '@scure/btc-signer';
 import type { SwapTreeSerializer } from 'boltz-core';
 import { OutputType } from 'boltz-core';
@@ -33,6 +32,8 @@ import {
 } from '../Utils';
 import ApiErrors from '../api/Errors';
 import { checkPreimageHashLength, errorsNotToLog } from '../api/Utils';
+import { staleChainReason } from '../blake2b/ChainPace';
+import { checkSwapsAllowed } from '../blake2b/MainnetLock';
 import type { Timeouts as ArkTimeouts } from '../chain/ArkClient';
 import type ArkClient from '../chain/ArkClient';
 import ElementsClient from '../chain/ElementsClient';
@@ -1215,6 +1216,9 @@ class Service {
 
     referralId?: string;
   }> => {
+    // SwapSha D7, D37: no new swaps on mainnet until Phase 5
+    checkSwapsAllowed();
+
     if (args.paymentTimeout) {
       if (args.paymentTimeout < 1 || args.paymentTimeout > 3_600) {
         throw Errors.INVALID_PAYMENT_TIMEOUT();
@@ -1421,6 +1425,9 @@ class Service {
     pairHash?: string,
     extraFees?: ExtraFees,
   ) => {
+    // SwapSha D7, D37: no new swaps on mainnet until Phase 5
+    checkSwapsAllowed();
+
     const swap = await SwapRepository.getSwap({
       id,
     });
@@ -1839,6 +1846,9 @@ class Service {
 
     referralId?: string;
   }> => {
+    // SwapSha D7, D37: no new swaps on mainnet until Phase 5
+    checkSwapsAllowed();
+
     const side = this.getOrderSide(args.orderSide);
     const referralId = await this.getReferralId(
       args.referralId,
@@ -2261,6 +2271,9 @@ class Service {
     webHook?: WebHookData;
     extraFees?: ExtraFees;
   }) => {
+    // SwapSha D7, D37: no new swaps on mainnet until Phase 5
+    checkSwapsAllowed();
+
     await this.checkSwapWithPreimageExists(SwapType.Chain, args.preimageHash);
 
     const side = this.getOrderSide(args.orderSide);

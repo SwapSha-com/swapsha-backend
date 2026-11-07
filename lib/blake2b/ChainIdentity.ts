@@ -50,7 +50,8 @@ export class ChainIdentityError extends Error {}
  * the SHA-256 currency at a BLAKE2b node, or the BLAKE2b currency at a
  * SHA-256 node, stops startup.
  *
- * Mainnet BLAKE2b is refused until SWAPSHA_ALLOW_MAINNET=1 (Blueprint D7).
+ * Mainnet runs the same checks against the real nodes. Swaps on mainnet are
+ * turned down separately until Phase 5 (MainnetLock, Blueprint D7, D37).
  */
 export const verifyChainIdentity = async (
   client: ChainClient,
@@ -90,12 +91,6 @@ export const verifyChainIdentity = async (
       );
     }
     return `${symbol}: SHA-256 chain (no active BLAKE2b deployment)`;
-  }
-
-  if (isMainnet && process.env.SWAPSHA_ALLOW_MAINNET !== '1') {
-    throw new ChainIdentityError(
-      `${symbol} is a BLAKE2b currency on mainnet. Mainnet stays off until Phase 5 (set SWAPSHA_ALLOW_MAINNET=1 to override).`,
-    );
   }
 
   if (!active || deployment?.height === undefined) {

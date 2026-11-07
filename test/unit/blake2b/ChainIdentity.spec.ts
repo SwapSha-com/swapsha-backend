@@ -124,17 +124,20 @@ describe('verifyChainIdentity', () => {
     ).rejects.toThrow('not a valid v2 BLAKE2b header');
   });
 
-  test('refuses BLAKE2b mainnet unless explicitly allowed', async () => {
+  // D37 (amended Nov 6): mainnet runs every check; MainnetLock turns swaps down
+  test('runs the mainnet fork block check without the allow flag', async () => {
     await expect(
       verifyChainIdentity(
         mockClient({
           deployment: { height: 961640, active: true },
+          header: V2_HEADER,
+          hash: V2_HASH,
           chain: 'main',
         }),
         true,
         'mainnet',
       ),
-    ).rejects.toThrow('Mainnet stays off until Phase 5');
+    ).rejects.toThrow('not the BLAKE2b mainnet fork block');
   });
 
   test('refuses a mainnet fork block that is not the known one', async () => {
@@ -168,17 +171,32 @@ describe('verifyChainIdentity', () => {
     expect(() => networkKind('bitcoinMoon')).toThrow(ChainIdentityError);
   });
 
-  test('the mainnet guard holds for the boltz-core spelling too', async () => {
+  test('the mainnet checks hold for the boltz-core spelling too', async () => {
     await expect(
       verifyChainIdentity(
         mockClient({
           deployment: { height: 961640, active: true },
+          header: V2_HEADER,
+          hash: V2_HASH,
           chain: 'main',
         }),
         true,
         'bitcoinMainnet',
       ),
-    ).rejects.toThrow('Mainnet stays off until Phase 5');
+    ).rejects.toThrow('not the BLAKE2b mainnet fork block');
+  });
+
+  test('refuses a mainnet BLAKE2b currency whose node is on testnet4', async () => {
+    await expect(
+      verifyChainIdentity(
+        mockClient({
+          deployment: { height: 150308, active: true },
+          chain: 'testnet4',
+        }),
+        true,
+        'mainnet',
+      ),
+    ).rejects.toThrow('configured for mainnet but its node is on "testnet4"');
   });
 
   test('refuses a node on a different network than configured', async () => {

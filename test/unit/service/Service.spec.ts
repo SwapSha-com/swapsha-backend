@@ -16,6 +16,7 @@ import {
   getUnixTime,
 } from '../../../lib/Utils';
 import ApiErrors from '../../../lib/api/Errors';
+import { setMainnetLock } from '../../../lib/blake2b/MainnetLock';
 import ArkClient from '../../../lib/chain/ArkClient';
 import ChainClient from '../../../lib/chain/ChainClient';
 import {
@@ -1990,6 +1991,71 @@ describe('Service', () => {
     await expect(service.rotateReferralKeys('missing')).rejects.toEqual(
       new Error('could not find referral with id: missing'),
     );
+  });
+
+  describe('SwapSha D7, D37: mainnet lock', () => {
+    beforeEach(() => {
+      setMainnetLock([{ symbol: 'BTC', network: 'mainnet' }]);
+    });
+
+    afterEach(() => {
+      setMainnetLock([]);
+    });
+
+    const turnedDown = 'New swaps are turned down';
+    const preimageHash = randomBytes(32);
+
+    test('turns down submarine swaps', async () => {
+      await expect(
+        service.createSwap({
+          preimageHash,
+          pairId: 'BTC/BTC',
+          orderSide: 'buy',
+          version: SwapVersion.Taproot,
+          refundPublicKey: randomBytes(33),
+        }),
+      ).rejects.toThrow(turnedDown);
+    });
+
+    test('turns down setting an invoice', async () => {
+      await expect(service.setInvoice('id', 'invoice')).rejects.toThrow(
+        turnedDown,
+      );
+    });
+
+    test('turns down reverse swaps', async () => {
+      await expect(
+        service.createReverseSwap({
+          preimageHash,
+          pairId: 'BTC/BTC',
+          orderSide: 'buy',
+          version: SwapVersion.Taproot,
+          invoiceAmount: 100_000,
+          claimPublicKey: randomBytes(33),
+        }),
+      ).rejects.toThrow(turnedDown);
+    });
+
+    test('turns down chain swaps', async () => {
+      await expect(
+        service.createChainSwap({
+          preimageHash,
+          pairId: 'BTC/BTC',
+          orderSide: 'buy',
+          userLockAmount: 100_000,
+          claimPublicKey: randomBytes(33),
+          refundPublicKey: randomBytes(33),
+        }),
+      ).rejects.toThrow(turnedDown);
+    });
+
+    test('lets swaps through again once lifted', async () => {
+      setMainnetLock([{ symbol: 'BTC', network: 'regtest' }]);
+      mockGetSwapResult = null;
+      await expect(service.setInvoice('id', 'invoice')).rejects.toEqual(
+        Errors.SWAP_NOT_FOUND('id'),
+      );
+    });
   });
 
   test('should create swaps', async () => {
