@@ -280,8 +280,17 @@ class RateProviderTaproot extends RateProviderBase<SwapTypes> {
     }
   };
 
-  public getRate = (pairId: string, type: SwapType): number | undefined => {
-    const nested = this.getToMap(pairId, OrderSide.SELL, type);
+  /**
+   * SwapSha: the order side defaults to sell, as upstream; a pair whose swaps
+   * of this type exist only on the buy side (BTC/SHA256 submarine swaps:
+   * SHA-256 on chain, BTC over Lightning) has to say so
+   */
+  public getRate = (
+    pairId: string,
+    type: SwapType,
+    orderSide: OrderSide = OrderSide.SELL,
+  ): number | undefined => {
+    const nested = this.getToMap(pairId, orderSide, type);
     if (nested === undefined) {
       return undefined;
     }

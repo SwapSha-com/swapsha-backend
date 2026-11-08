@@ -1671,10 +1671,12 @@ class SwapNursery extends TypedEventEmitter<SwapNurseryEvents> {
    */
   private setSwapRate = async (swap: Swap) => {
     if (!swap.rate) {
+      // SwapSha: look the rate up on the swap's own order side
       const rate = getRate(
         this.rateProvider.providers[swap.version].getRate(
           swap.pair,
           swap.type,
+          swap.orderSide,
         )!,
         swap.orderSide,
         false,

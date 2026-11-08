@@ -1,6 +1,7 @@
 import { parseTransaction } from '../Core';
 import type Logger from '../Logger';
 import { isTxConfirmed } from '../Utils';
+import { chainLimitAmount, chainSwapRate } from '../blake2b/ChainRate';
 import type { OrderSide } from '../consts/Enums';
 import {
   CurrencyType,
@@ -286,22 +287,26 @@ class Renegotiator {
       throw Errors.PAIR_NOT_FOUND(swap.pair);
     }
 
+    // SwapSha: the limits are in quote units and the pair rate has to be
+    // turned per order side, as when the swap was created; both only matter
+    // with a rate other than 1
+    const rate = chainSwapRate(pair.rate, swap.orderSide);
+    const limitAmount = chainLimitAmount(
+      swap.receivingData.amount!,
+      pair.rate,
+      swap.orderSide,
+    );
+
     if (
-      swap.receivingData.amount! >
+      limitAmount >
       pair.limits.maximal +
         this.overpaymentProtector.getAllowedPositiveSlippage(
           pair.limits.maximal,
         )
     ) {
-      throw Errors.EXCEED_MAXIMAL_AMOUNT(
-        swap.receivingData.amount!,
-        pair.limits.maximal,
-      );
-    } else if (swap.receivingData.amount! < pair.limits.minimal) {
-      throw Errors.BENEATH_MINIMAL_AMOUNT(
-        swap.receivingData.amount!,
-        pair.limits.minimal,
-      );
+      throw Errors.EXCEED_MAXIMAL_AMOUNT(limitAmount, pair.limits.maximal);
+    } else if (limitAmount < pair.limits.minimal) {
+      throw Errors.BENEATH_MINIMAL_AMOUNT(limitAmount, pair.limits.minimal);
     }
 
     const { baseFee, feePercent } = this.getFees(
@@ -311,7 +316,7 @@ class Renegotiator {
     );
 
     const serverLockAmount = this.calculateServerLockAmount(
-      pair.rate,
+      rate,
       swap.receivingData.amount!,
       feePercent,
       baseFee,
@@ -322,7 +327,7 @@ class Renegotiator {
     const extraFees = await ExtraFeeRepository.get(swap.id);
     if (extraFees !== undefined && extraFees !== null) {
       const serverLockAmountWithExtraFees = this.calculateServerLockAmount(
-        pair.rate,
+        rate,
         swap.receivingData.amount!,
         FeeProvider.calculateTotalPercentageFeeCalculation(
           feePercent,

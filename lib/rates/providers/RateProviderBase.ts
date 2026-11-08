@@ -39,7 +39,11 @@ abstract class RateProviderBase<T> {
     type: SwapType,
   ): void;
 
-  public abstract getRate(pairId: string, type: SwapType): number | undefined;
+  public abstract getRate(
+    pairId: string,
+    type: SwapType,
+    orderSide?: OrderSide,
+  ): number | undefined;
 
   protected abstract hashPair(pair: T): string;
 
