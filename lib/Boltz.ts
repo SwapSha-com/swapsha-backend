@@ -19,7 +19,11 @@ import {
 } from './blake2b/ChainIdentity';
 import { setPaceBounds } from './blake2b/ChainPace';
 import { verifyLightningIdentity } from './blake2b/LightningIdentity';
-import { setMainnetLock, swapsTurnedDownReason } from './blake2b/MainnetLock';
+import {
+  setMainnetLock,
+  setOperatorPause,
+  swapsTurnedDownReason,
+} from './blake2b/MainnetLock';
 import {
   bip32VersionsFor,
   directSeedWalletNode,
@@ -226,6 +230,12 @@ class Boltz {
       this.logger.warn(
         `${mainnetLock}. The startup checks still run against the nodes.`,
       );
+    }
+
+    // SwapSha A3c: the operator's pause turns down new swaps only
+    const operatorPause = setOperatorPause(this.config.pauseNewSwaps === true);
+    if (operatorPause !== undefined) {
+      this.logger.warn(operatorPause);
     }
 
     const walletCurrencies = Array.from(this.currencies.values());

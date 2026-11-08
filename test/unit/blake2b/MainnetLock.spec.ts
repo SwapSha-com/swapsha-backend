@@ -1,7 +1,9 @@
 import {
   checkSwapsAllowed,
   mainnetLockReason,
+  operatorPauseReason,
   setMainnetLock,
+  setOperatorPause,
   swapsTurnedDownReason,
 } from '../../../lib/blake2b/MainnetLock';
 
@@ -9,6 +11,7 @@ describe('MainnetLock', () => {
   afterEach(() => {
     delete process.env.SWAPSHA_ALLOW_MAINNET;
     setMainnetLock([]);
+    setOperatorPause(false);
   });
 
   test.each([
@@ -78,5 +81,42 @@ describe('MainnetLock', () => {
     setMainnetLock([{ symbol: 'BTC', network: 'regtest' }]);
     expect(swapsTurnedDownReason()).toBeUndefined();
     expect(() => checkSwapsAllowed()).not.toThrow();
+  });
+
+  describe('operator pause (A3c)', () => {
+    test('turns new swaps down', () => {
+      expect(setOperatorPause(true)).toEqual(operatorPauseReason);
+      expect(swapsTurnedDownReason()).toEqual(operatorPauseReason);
+      expect(() => checkSwapsAllowed()).toThrow(
+        'New swaps are paused by the operator',
+      );
+    });
+
+    test('lets a step of an existing swap through', () => {
+      setOperatorPause(true);
+      expect(() => checkSwapsAllowed(true)).not.toThrow();
+    });
+
+    test('the mainnet lock does not let it through', () => {
+      setMainnetLock([{ symbol: 'BTC', network: 'mainnet' }]);
+      expect(() => checkSwapsAllowed(true)).toThrow(
+        'New swaps are turned down',
+      );
+    });
+
+    test('names both reasons when both apply', () => {
+      setMainnetLock([{ symbol: 'BTC', network: 'mainnet' }]);
+      setOperatorPause(true);
+      const turnedDown = swapsTurnedDownReason()!;
+      expect(turnedDown).toContain('mainnet stays off until Phase 5');
+      expect(turnedDown).toContain(operatorPauseReason);
+    });
+
+    test('lifting it lets new swaps through', () => {
+      setOperatorPause(true);
+      expect(setOperatorPause(false)).toBeUndefined();
+      expect(swapsTurnedDownReason()).toBeUndefined();
+      expect(() => checkSwapsAllowed()).not.toThrow();
+    });
   });
 });

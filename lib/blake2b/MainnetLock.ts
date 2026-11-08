@@ -44,12 +44,41 @@ export const setMainnetLock = (
   return reason;
 };
 
-/** Why new swaps are turned down, or undefined when they are not */
-export const swapsTurnedDownReason = (): string | undefined => reason;
+let pauseReason: string | undefined;
 
-/** Throws when new swaps are turned down. Call first in every swap creation path. */
-export const checkSwapsAllowed = (): void => {
-  if (reason !== undefined) {
-    throw new Error(reason);
+/**
+ * SwapSha build step A3c: the operator's pause, `pauseNewSwaps = true` in
+ * the config (the StartOS package sets it from its Pause action and restarts
+ * the backend). New swaps are turned down; swaps already made carry on to
+ * their claim or refund, including a submarine swap whose invoice is set
+ * after the pause began.
+ */
+export const operatorPauseReason =
+  'New swaps are paused by the operator; swaps already made carry on';
+
+/** Sets the operator's pause; returns its reason */
+export const setOperatorPause = (paused: boolean): string | undefined => {
+  pauseReason = paused ? operatorPauseReason : undefined;
+  return pauseReason;
+};
+
+/** Why new swaps are turned down, or undefined when they are not */
+export const swapsTurnedDownReason = (): string | undefined => {
+  const reasons = [reason, pauseReason].filter(
+    (entry): entry is string => entry !== undefined,
+  );
+  return reasons.length === 0 ? undefined : reasons.join('. ');
+};
+
+/**
+ * Throws when new swaps are turned down. Call first in every swap creation
+ * path. `forExistingSwap` is for steps of a swap made earlier (setting a
+ * submarine swap's invoice), which the operator's pause lets through and
+ * the mainnet lock does not.
+ */
+export const checkSwapsAllowed = (forExistingSwap = false): void => {
+  const turnedDown = forExistingSwap ? reason : swapsTurnedDownReason();
+  if (turnedDown !== undefined) {
+    throw new Error(turnedDown);
   }
 };

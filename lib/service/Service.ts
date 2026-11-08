@@ -1425,8 +1425,9 @@ class Service {
     pairHash?: string,
     extraFees?: ExtraFees,
   ) => {
-    // SwapSha D7, D37: no new swaps on mainnet until Phase 5
-    checkSwapsAllowed();
+    // SwapSha D7, D37: no new swaps on mainnet until Phase 5. The
+    // operator's pause (A3c) lets an existing swap's invoice through
+    checkSwapsAllowed(true);
 
     const swap = await SwapRepository.getSwap({
       id,

@@ -253,6 +253,9 @@ type ConfigType = {
 
   network?: string;
 
+  // SwapSha build step A3c: the operator's pause (lib/blake2b/MainnetLock.ts)
+  pauseNewSwaps?: boolean;
+
   lokiEndpoint?: string;
   otlpEndpoint?: string;
   profilingEndpoint?: string;
