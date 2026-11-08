@@ -27,9 +27,14 @@ export const NET: 'regtest' | 'testnet4' =
   process.env.SWAPSHA_NET === 'testnet4' ? 'testnet4' : 'regtest';
 export const LIVE = NET === 'testnet4';
 
-export const API = LIVE
-  ? 'http://127.0.0.1:9101/v2'
-  : 'http://127.0.0.1:9001/v2';
+// SWAPSHA_API points the suites at another backend, such as the StartOS
+// package in test mode (Blueprint D46) through its API interface:
+//   SWAPSHA_API=https://edgy-outcome.local:59510/v2
+// with NODE_OPTIONS=--use-system-ca so Node trusts the server's root CA from
+// the Mac's keychain. The user's side still runs on this Mac's nodes.
+export const API =
+  process.env.SWAPSHA_API ??
+  (LIVE ? 'http://127.0.0.1:9101/v2' : 'http://127.0.0.1:9001/v2');
 export const SHA = LIVE ? 48332 : 18443;
 export const BLAKE = LIVE ? 48432 : 18543;
 

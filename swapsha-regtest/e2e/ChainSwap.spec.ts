@@ -12,6 +12,10 @@
  * ./swapsha-testnet4/run.sh), the same tests wait for real blocks:
  *   SWAPSHA_NET=testnet4 npx jest --rootDir . swapsha-regtest/e2e/ChainSwap.spec.ts --runInBand
  *
+ * Against the StartOS package in test mode (D46), on testnet4 with this Mac's
+ * nodes opened to the server (swapsha_testnet4.sh lan), add
+ *   SWAPSHA_API=https://edgy-outcome.local:59510/v2 NODE_OPTIONS=--use-system-ca
+ *
  * The property every test checks: nothing the swap puts on one chain can be
  * valid on the other. HTLC spends signed by SwapSha's own code on the BTC side
  * always carry SIGHASH_UNIFIED (0x21). Wallet-funded transactions are safe
