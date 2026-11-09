@@ -40,8 +40,14 @@ export const API =
 export const SHA = LIVE ? 48332 : 18443;
 export const BLAKE = LIVE ? 48432 : 18543;
 
-/** Jest timeout per test: refunds on testnet4 wait for real timeouts. */
-export const TEST_TIMEOUT = LIVE ? 12 * 60 * 60 * 1000 : 600_000;
+/**
+ * Jest timeout per test: refunds on testnet4 wait for real timeouts. The
+ * user's SHA-256 lockup in a SHA256 -> BTC swap times out about 175 blocks
+ * after it is made, stretched for the worst pace pairing (D30): 18 to 55
+ * hours at the measured testnet4 pace, so 12 hours cut the backend refund
+ * test off before its cleanup (Nov 9).
+ */
+export const TEST_TIMEOUT = LIVE ? 72 * 60 * 60 * 1000 : 600_000;
 export const port = (symbol: 'SHA256' | 'BTC') =>
   symbol === 'SHA256' ? SHA : BLAKE;
 export const modeOf = (symbol: 'SHA256' | 'BTC'): SighashMode =>
