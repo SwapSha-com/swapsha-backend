@@ -10,6 +10,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::{broadcast, oneshot};
 
+pub mod block_catchup;
 pub mod bumper;
 pub mod chain_client;
 pub mod elements;

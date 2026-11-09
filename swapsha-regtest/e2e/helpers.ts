@@ -29,7 +29,9 @@ export const LIVE = NET === 'testnet4';
 
 // SWAPSHA_API points the suites at another backend, such as the StartOS
 // package in test mode (Blueprint D46) through its API interface:
-//   SWAPSHA_API=https://edgy-outcome.local:59510/v2
+//   SWAPSHA_API=https://192.168.4.21:54625/v2
+// (the server's LAN IP and the API interface's port, from its Interfaces
+// page; StartOS can give the interface a new port when it is reinstalled)
 // with NODE_OPTIONS=--use-system-ca so Node trusts the server's root CA from
 // the Mac's keychain. The user's side still runs on this Mac's nodes.
 export const API =

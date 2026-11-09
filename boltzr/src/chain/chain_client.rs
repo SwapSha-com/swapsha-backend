@@ -198,6 +198,15 @@ impl ChainClient {
             });
         }
 
+        // SwapSha A5b: blocks the node has that ZeroMQ never delivered go
+        // into the same stream (block_catchup.rs)
+        crate::chain::block_catchup::spawn(
+            cancellation_token.clone(),
+            client_type,
+            client.client.clone(),
+            client.zmq_client.block_sender.clone(),
+        );
+
         {
             let mut block_receiver = client.zmq_client.block_sender.subscribe();
             let block_sender = client.block_sender.clone();

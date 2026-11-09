@@ -14,7 +14,8 @@
  *
  * Against the StartOS package in test mode (D46), on testnet4 with this Mac's
  * nodes opened to the server (swapsha_testnet4.sh lan), add
- *   SWAPSHA_API=https://edgy-outcome.local:59510/v2 NODE_OPTIONS=--use-system-ca
+ *   SWAPSHA_API=https://192.168.4.21:54625/v2 NODE_OPTIONS=--use-system-ca
+ * (the server's LAN IP and the API port from its Interfaces page)
  *
  * The property every test checks: nothing the swap puts on one chain can be
  * valid on the other. HTLC spends signed by SwapSha's own code on the BTC side
