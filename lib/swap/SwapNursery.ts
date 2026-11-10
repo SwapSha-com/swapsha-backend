@@ -1236,6 +1236,64 @@ class SwapNursery extends TypedEventEmitter<SwapNurseryEvents> {
     }
   };
 
+  /**
+   * SwapSha D44 (third amendment): a refund of SwapSha's lockup that the
+   * operator made with the package's Rescue Swap action while the backend
+   * was stopped, checked against the swap by RescueRecords and confirmed.
+   * Booked like refundVtxo books an instant refund: the same refund record
+   * and status, then RefundWatcher, so a type 2 hold invoice is cancelled on
+   * the same path as after the backend's own refunds.
+   */
+  public adoptRescueRefund = async (
+    swap: ReverseSwap | ChainSwapInfo,
+    symbol: string,
+    lockupTransactionId: string,
+    refundTransactionId: string,
+    vin: number,
+    minerFee: number,
+  ) => {
+    const refundTransaction = await RefundTransactionRepository.addTransaction({
+      swapId: swap.id,
+      symbol,
+      id: refundTransactionId,
+      vin,
+    });
+    const refundedSwap = await WrappedSwapRepository.setTransactionRefunded(
+      swap,
+      minerFee,
+      Errors.REFUNDED_COINS(lockupTransactionId).message,
+    );
+
+    this.emit('refund', {
+      confirmed: false,
+      emitFailure: true,
+      refundTransaction: refundTransactionId,
+      swap: refundedSwap,
+    });
+    await this.refundWatcher.checkTransaction(refundTransaction, refundedSwap);
+  };
+
+  /**
+   * SwapSha D44 (third amendment): a claim of the user's lockup that the
+   * operator made with Rescue Swap, booked as the backend books its own.
+   */
+  public adoptRescueClaim = async (
+    swap: Swap | ChainSwapInfo,
+    preimage: Buffer,
+    minerFee: number,
+  ) => {
+    this.emit('claim', {
+      swap:
+        swap.type === SwapType.Submarine
+          ? await SwapRepository.setMinerFee(swap as Swap, minerFee)
+          : await ChainSwapRepository.setClaimMinerFee(
+              swap as ChainSwapInfo,
+              preimage,
+              minerFee,
+            ),
+    });
+  };
+
   private handleChainSwapLockup = async (
     swap: ChainSwapInfo,
     approval: SendApprovalAction,

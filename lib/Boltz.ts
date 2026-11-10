@@ -38,6 +38,7 @@ import {
 } from './blake2b/ProviderCoins';
 import { setSeenFile } from './blake2b/PrunedHistory';
 import { setReplayForkHeight } from './blake2b/ReplayGuard';
+import { adoptRescues } from './blake2b/RescueRecords';
 import { setSighashMode } from './blake2b/SighashMode';
 import ArkClient from './chain/ArkClient';
 import ChainClient, { type IChainClient } from './chain/ChainClient';
@@ -495,6 +496,8 @@ class Boltz {
         this.config.pairs,
       );
 
+      await this.watchRescues();
+
       await this.notifications?.init();
       this.emailNotifier?.init();
 
@@ -565,6 +568,37 @@ class Boltz {
       // eslint-disable-next-line n/no-process-exit
       process.exit(1);
     }
+  };
+
+  /**
+   * SwapSha D44 (third amendment): rescues the operator made with the
+   * package's Rescue Swap action while the backend was stopped. Checked
+   * once at startup, before the rescan can try the backend's own refund of
+   * a spent lockup, and again at every block while one waits to confirm.
+   */
+  private watchRescues = async () => {
+    const reported = new Set<string>();
+    const nursery = this.service.swapManager.nursery;
+    const run = () =>
+      adoptRescues(
+        this.logger,
+        this.config.datadir,
+        this.currencies,
+        nursery,
+        reported,
+      );
+
+    await run();
+    let running = false;
+    this.sidecar.on('block', async () => {
+      if (running) return;
+      running = true;
+      try {
+        await run();
+      } finally {
+        running = false;
+      }
+    });
   };
 
   private reconcileStartupArkSubscriptions = async (arkNode: ArkClient) => {
