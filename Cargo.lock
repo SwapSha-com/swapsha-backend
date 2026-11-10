@@ -2246,6 +2246,7 @@ dependencies = [
  "alloy",
  "anyhow",
  "async-tungstenite",
+ "bip39",
  "bitcoin",
  "bitcoin_hashes 1.0.0",
  "boltz-core",

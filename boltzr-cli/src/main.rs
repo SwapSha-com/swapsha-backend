@@ -12,6 +12,7 @@ mod api;
 mod ark;
 mod evm;
 mod grpc;
+mod keys;
 mod parsers;
 mod serde;
 mod tx;
@@ -288,6 +289,15 @@ enum ToolsCommands {
         alias = "cph"
     )]
     CommitmentPreimageHash,
+    #[command(
+        about = "Derives a swap key from a mnemonic file such as seed.dat, offline (SwapSha rescue)"
+    )]
+    DeriveKey {
+        #[arg(help = "File with the mnemonic, such as SwapSha's seed.dat")]
+        mnemonic_file: PathBuf,
+        #[arg(help = "Full derivation path from the rescue file, such as m/0/1/5")]
+        path: String,
+    },
 }
 
 #[derive(Clone, Subcommand)]
@@ -872,6 +882,12 @@ async fn run_command(cli: Cli) -> Result<()> {
             }
             ToolsCommands::CommitmentPreimageHash => {
                 println!("{}", alloy::hex::encode([0u8; 32]));
+            }
+            ToolsCommands::DeriveKey {
+                mnemonic_file,
+                path,
+            } => {
+                print_pretty(&keys::derive(mnemonic_file, path)?)?;
             }
         },
         Commands::GetInfo {} => {
