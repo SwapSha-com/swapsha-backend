@@ -238,7 +238,30 @@ export const createSwap = async (
   userLockAmount = 100_000,
 ): Promise<CreatedSwap> => {
   const pairs =
-    await api<Record<string, Record<string, { hash: string }>>>('/swap/chain');
+    await api<
+      Record<
+        string,
+        Record<
+          string,
+          { hash: string; rate: number; limits: { minimal: number } }
+        >
+      >
+    >('/swap/chain');
+  const pair = pairs[from][to];
+  // The backend raises its smallest swap to cover miner fees: on testnet4 it
+  // went from 56,406 to 102,510 SHA-256 sats overnight (Nov 10), past the
+  // default. Limits are in SHA-256 sats; a BTC lockup counts at the rate.
+  const minimal =
+    from === 'SHA256'
+      ? pair.limits.minimal
+      : Math.ceil(pair.limits.minimal / pair.rate);
+  const amount =
+    userLockAmount < minimal ? Math.ceil(minimal * 1.02) : userLockAmount;
+  if (amount !== userLockAmount) {
+    console.log(
+      `${from} lock raised from ${userLockAmount} to ${amount}: the smallest swap is ${minimal} now`,
+    );
+  }
   const claimKey = secp256k1.utils.randomSecretKey();
   const refundKey = secp256k1.utils.randomSecretKey();
   const preimage = randomBytes(32);
@@ -250,8 +273,8 @@ export const createSwap = async (
     preimageHash: hex.encode(sha256(preimage)),
     claimPublicKey: hex.encode(secp256k1.getPublicKey(claimKey)),
     refundPublicKey: hex.encode(secp256k1.getPublicKey(refundKey)),
-    userLockAmount,
-    pairHash: pairs[from][to].hash,
+    userLockAmount: amount,
+    pairHash: pair.hash,
   });
   console.log(
     `swap ${swap.id} ${from} -> ${to}: lock ${swap.lockupDetails.amount}, receive ${swap.claimDetails.amount}`,
