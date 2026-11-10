@@ -496,10 +496,13 @@ class Boltz {
         this.config.pairs,
       );
 
-      await this.watchRescues();
-
       await this.notifications?.init();
       this.emailNotifier?.init();
+
+      // After the notification service: a rescue adopted before it had
+      // decided whether the sidecar sends notifications made an unhandled
+      // rejection (Nov 10)
+      await this.watchRescues();
 
       await this.grpcServer.listen();
       await this.api.init();
@@ -573,8 +576,8 @@ class Boltz {
   /**
    * SwapSha D44 (third amendment): rescues the operator made with the
    * package's Rescue Swap action while the backend was stopped. Checked
-   * once at startup, before the rescan can try the backend's own refund of
-   * a spent lockup, and again at every block while one waits to confirm.
+   * once at startup, before the rescan, and again at every block while one
+   * waits to confirm.
    */
   private watchRescues = async () => {
     const reported = new Set<string>();
