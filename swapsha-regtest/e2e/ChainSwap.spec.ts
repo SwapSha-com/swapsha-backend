@@ -48,6 +48,7 @@ import {
   userRefund,
   waitFor,
 } from './helpers';
+import { saveUserRefund } from './refundKeys';
 
 const UNIFIED = 0x21;
 
@@ -138,7 +139,10 @@ describe('B5: chain swaps between Spamcoin (SHA256, the SHA-256 chain) and BTC (
 
   test('backend refunds its BTC lockup when the user never claims, signed 0x21', async () => {
     const swap = await createSwap('SHA256', 'BTC');
+    // testnet4: the cleanup below comes a day or more later
+    if (LIVE) await saveUserRefund(swap);
     const userLock = await lockUser(swap);
+    if (LIVE) await saveUserRefund(swap, userLock);
     await waitFor(swap.id, 'transaction.server.mempool', SHA);
     const lock = await serverLockup(swap);
     await mine(BLAKE);
