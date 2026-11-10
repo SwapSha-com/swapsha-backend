@@ -25,6 +25,7 @@
  * is stopped: SWAPSHA_REFUND_FILE=<that file> with -t "saved".
  */
 import { hex } from '@scure/base';
+import { readFile } from 'node:fs/promises';
 import {
   API,
   BLAKE,
@@ -114,6 +115,7 @@ const rescue = async ({
   lockupAddress,
   timeout,
   tree,
+  stopped = false,
 }: {
   id: string;
   nodePort: number;
@@ -122,22 +124,28 @@ const rescue = async ({
   lockupAddress: string;
   timeout: number;
   tree: Tree;
+  // Resuming: SwapSha was stopped by an earlier run
+  stopped?: boolean;
 }) => {
   const vout = await voutTo(nodePort, lockHex, lockupAddress);
-  console.log(
-    [
-      `SwapSha's ${chainName(nodePort)} lockup ${lockId}:${vout} is confirmed.`,
-      `1. In StartOS, run Export Rescue Data: swap ${id} should say "Refund its own lockup ... from block ${timeout}".`,
-      '2. Stop SwapSha; with another rescue test running, first wait until it says this too. Keep SwapSha stopped until this test says its refund is confirmed.',
-    ].join('\n'),
-  );
-  await waitUntilStopped();
+  if (!stopped) {
+    console.log(
+      [
+        `SwapSha's ${chainName(nodePort)} lockup ${lockId}:${vout} is confirmed.`,
+        `1. In StartOS, run Export Rescue Data: swap ${id} should say "Refund its own lockup ... from block ${timeout}".`,
+        '2. Stop SwapSha; with another rescue test running, first wait until it says this too. Keep SwapSha stopped until this test says its refund is confirmed.',
+      ].join('\n'),
+    );
+    await waitUntilStopped();
+  }
 
   await mineTo(nodePort, timeout);
   const address = await rpc<string>(
     nodePort,
     'getnewaddress',
-    [],
+    // The Mac nodes default to legacy addresses, and SwapSha's wallets hold
+    // only SegWit and Taproot keys (D40)
+    ['', 'bech32'],
     SWAPSHA_WALLET,
   );
   console.log(
@@ -238,6 +246,54 @@ const rescue = async ({
       );
       await mine(SHA);
     });
+
+    // Resume a rescue whose run ended early, from the JSON that Export Rescue
+    // Data shows (copied, then saved with pbpaste) and the swap's ID
+    (process.env.SWAPSHA_RESCUE_EXPORT && process.env.SWAPSHA_RESCUE_SWAP
+      ? test
+      : test.skip)(
+      'resume: SwapSha refunds a swap from the export through Rescue Swap',
+      async () => {
+        const id = process.env.SWAPSHA_RESCUE_SWAP!;
+        const exported = JSON.parse(
+          await readFile(process.env.SWAPSHA_RESCUE_EXPORT!, 'utf8'),
+        ) as {
+          swaps: {
+            id: string;
+            refund: {
+              chain: 'BTC' | 'SHA256';
+              lockupAddress: string;
+              transactionId: string;
+              timeoutBlockHeight: number;
+              swapTree: string;
+            } | null;
+          }[];
+        };
+        const leg = exported.swaps.find((s) => s.id === id)?.refund;
+        if (!leg)
+          throw new Error(
+            `swap ${id} has no lockup of SwapSha's to refund in the export`,
+          );
+        const nodePort = leg.chain === 'BTC' ? BLAKE : SHA;
+
+        await rescue({
+          id,
+          nodePort,
+          lockId: leg.transactionId,
+          // The Mac nodes keep a transaction index
+          lockHex: await rpc<string>(
+            nodePort,
+            'getrawtransaction',
+            [leg.transactionId, false],
+            '',
+          ),
+          lockupAddress: leg.lockupAddress,
+          timeout: leg.timeoutBlockHeight,
+          tree: JSON.parse(leg.swapTree) as Tree,
+          stopped: true,
+        });
+      },
+    );
 
     (process.env.SWAPSHA_REFUND_FILE ? test : test.skip)(
       'saved: user refunds a saved lockup after its timeout',
