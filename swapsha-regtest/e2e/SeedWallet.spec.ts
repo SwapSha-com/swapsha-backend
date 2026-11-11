@@ -63,7 +63,7 @@ run('SeedWallet (D40, regtest nodes)', () => {
       const options = { wallet, account, network: 'regtest', master };
 
       await expect(ensureSeedWallet(node, options)).resolves.toEqual(
-        `${symbol} node wallet "${wallet}" created, filled from seed.dat; matches seed.dat (84h and 86h, 1h/${account}h)`,
+        `${symbol} node wallet "${wallet}" created, filled from seed.dat; matches seed.dat (84h and 86h, 1h/${account}h). If a wallet of this name held coins before, run Recover Node Wallets (D40)`,
       );
 
       // A second start only checks

@@ -256,6 +256,12 @@ type ConfigType = {
   // SwapSha build step A3c: the operator's pause (lib/blake2b/MainnetLock.ts)
   pauseNewSwaps?: boolean;
 
+  // SwapSha D40 (second amendment, Nov 10): a one-time request to recover the
+  // seed wallets on the nodes from the BLAKE2b fork block, set by the
+  // package's Recover Node Wallets action. Done once per value; the last
+  // value done is kept in wallet-recovery.json in the data directory.
+  recoverNodeWallets?: string;
+
   lokiEndpoint?: string;
   otlpEndpoint?: string;
   profilingEndpoint?: string;

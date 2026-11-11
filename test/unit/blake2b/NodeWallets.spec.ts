@@ -189,7 +189,7 @@ describe('NodeWallets (D40)', () => {
         master: master('regtest'),
       }),
     ).resolves.toEqual(
-      'BTC node wallet "swapsha" created, filled from seed.dat; matches seed.dat (84h and 86h, 1h/0h)',
+      'BTC node wallet "swapsha" created, filled from seed.dat; matches seed.dat (84h and 86h, 1h/0h). If a wallet of this name held coins before, run Recover Node Wallets (D40)',
     );
 
     expect(calls.find((c) => c.method === 'createwallet')!.params).toEqual([

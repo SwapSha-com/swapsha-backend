@@ -1,5 +1,6 @@
 import Tracing from './Tracing';
 import { Networks as LiquidNetworks } from 'boltz-core/liquid';
+import fs from 'node:fs';
 import path from 'node:path';
 import type { Arguments } from 'yargs';
 import type { ConfigType, TokenConfig } from './Config';
@@ -24,10 +25,13 @@ import {
   setOperatorPause,
   swapsTurnedDownReason,
 } from './blake2b/MainnetLock';
+import type { WalletRecovery } from './blake2b/NodeWallets';
 import {
   bip32VersionsFor,
+  describeRecovery,
   directSeedWalletNode,
   ensureSeedWallet,
+  recoverSeedWallet,
 } from './blake2b/NodeWallets';
 import {
   DEFAULT_CONFLICT_DEPTH,
@@ -629,6 +633,41 @@ class Boltz {
    * on the wrong chain's node; connectChainClient runs it again later.
    */
   private ensureSeedWallets = async () => {
+    // D40, second amendment: a recovery the operator asked for and that has
+    // not been done yet
+    const recovery = this.config.recoverNodeWallets;
+    const recoveryFile = path.join(this.config.datadir, 'wallet-recovery.json');
+    let lastRecovery: string | undefined;
+    try {
+      lastRecovery = (
+        JSON.parse(fs.readFileSync(recoveryFile, 'utf-8')) as {
+          request?: string;
+        }
+      ).request;
+    } catch {
+      lastRecovery = undefined;
+    }
+    const recover =
+      recovery !== undefined && recovery !== '' && recovery !== lastRecovery;
+    const recovered: (WalletRecovery & { symbol: string })[] = [];
+    let fromHeight: number | undefined;
+    if (recover) {
+      const blake2b = this.config.currencies.find((c) => c.blake2b === true);
+      const client =
+        blake2b === undefined
+          ? undefined
+          : this.currencies.get(blake2b.symbol)?.chainClient;
+      if (!(client instanceof ChainClient)) {
+        throw new Error('recovering the node wallets needs the BLAKE2b node');
+      }
+      fromHeight = await blake2bForkHeight(client);
+      if (fromHeight === undefined) {
+        throw new Error(
+          'recovering the node wallets needs the BLAKE2b fork height, which the node does not report',
+        );
+      }
+    }
+
     for (const currencyConfig of this.config.currencies) {
       const account = currencyConfig.chain?.seedAccount;
       const client = this.currencies.get(currencyConfig.symbol)?.chainClient;
@@ -664,6 +703,33 @@ class Boltz {
             bip32VersionsFor(currencyConfig.network),
           ),
         }),
+      );
+
+      if (recover) {
+        this.logger.info(
+          `Recovering ${currencyConfig.symbol} node wallet "${currencyConfig.chain.wallet}" from block ${fromHeight} (D40); on a pruned node this fetches blocks back from peers and can take a while`,
+        );
+        const result = await recoverSeedWallet(node, {
+          wallet: currencyConfig.chain.wallet!,
+          fromHeight: fromHeight!,
+        });
+        this.logger.info(describeRecovery(currencyConfig.symbol, result));
+        recovered.push({ symbol: currencyConfig.symbol, ...result });
+      }
+    }
+
+    if (recover) {
+      fs.writeFileSync(
+        recoveryFile,
+        `${JSON.stringify(
+          {
+            request: recovery,
+            finished: new Date().toISOString(),
+            wallets: recovered,
+          },
+          null,
+          2,
+        )}\n`,
       );
     }
   };

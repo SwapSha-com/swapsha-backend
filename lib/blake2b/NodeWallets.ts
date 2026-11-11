@@ -305,5 +305,173 @@ export const ensureSeedWallet = async (
     );
   }
 
-  return `${name} ${done.length > 0 ? `${done.join(', ')}; ` : ''}matches seed.dat (${path})`;
+  // A wallet made here starts with no past: its coins, if it had any, come
+  // back only through a recovery
+  const hint = done.includes('created')
+    ? '. If a wallet of this name held coins before, run Recover Node Wallets (D40)'
+    : '';
+  return `${name} ${done.length > 0 ? `${done.join(', ')}; ` : ''}matches seed.dat (${path})${hint}`;
 };
+
+/**
+ * Blueprint D40, second amendment (Nov 10, build step A4b-3): getting a seed
+ * wallet's coins back once the wallet was lost and made again from seed.dat,
+ * blank. The descriptors are imported with timestamp now, so the node does
+ * not know the wallet's past; this finds it from `fromHeight`, the BLAKE2b
+ * fork block (no SwapSha wallet predates it).
+ *
+ * On an archival node one `rescanblockchain` does it. On a pruned node
+ * (the SHA-256 Companion, D38) `scanblocks` finds the blocks that touch the
+ * wallet's scripts in the block filters, `getblockfrompeer` fetches each
+ * pruned one back, and `rescanblockchain` over that one block adds what it
+ * holds. Blocks go in height order, so a spend is seen after its coin.
+ */
+export type WalletRecovery = {
+  wallet: string;
+  mode: 'rescan' | 'filters';
+  fromHeight: number;
+  /** Blocks rescanned: the whole range, or those the filters matched */
+  blocks: number;
+  /** Pruned blocks fetched back from peers */
+  fetched: number;
+  /** Confirmed balance afterwards, in coins */
+  balance: number;
+};
+
+type ScanDescriptor = ListedDescriptor & { range?: [number, number] };
+
+const defaultSleep = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+const hasBlock = async (node: SeedWalletNode, hash: string) => {
+  try {
+    await node.rpc('getblock', [hash, 0]);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** Asks each full peer in turn for a pruned block, until the node has it. */
+const fetchBlock = async (
+  node: SeedWalletNode,
+  hash: string,
+  sleep: (ms: number) => Promise<void>,
+  waitMs: number,
+) => {
+  const peers =
+    await node.rpc<{ id: number; servicesnames?: string[] }[]>('getpeerinfo');
+  const full = peers.filter((p) => p.servicesnames?.includes('NETWORK'));
+
+  for (const peer of full) {
+    try {
+      await node.rpc('getblockfrompeer', [hash, peer.id]);
+    } catch {
+      continue;
+    }
+    for (let waited = 0; waited < waitMs; waited += 1_000) {
+      if (await hasBlock(node, hash)) {
+        return;
+      }
+      await sleep(1_000);
+    }
+  }
+
+  throw new Error(
+    `${node.symbol}: no peer gave block ${hash} back (${full.length} full peer(s) asked)`,
+  );
+};
+
+const confirmedBalance = async (node: SeedWalletNode) =>
+  (await node.walletRpc<{ mine: { trusted: number } }>('getbalances')).mine
+    .trusted;
+
+export const recoverSeedWallet = async (
+  node: SeedWalletNode,
+  options: {
+    wallet: string;
+    fromHeight: number;
+    sleep?: (ms: number) => Promise<void>;
+    waitMs?: number;
+  },
+): Promise<WalletRecovery> => {
+  const { wallet, fromHeight } = options;
+  const sleep = options.sleep ?? defaultSleep;
+  const waitMs = options.waitMs ?? 60_000;
+
+  const info = await node.rpc<{ pruned: boolean; blocks: number }>(
+    'getblockchaininfo',
+  );
+
+  if (!info.pruned) {
+    await node.walletRpc('rescanblockchain', [fromHeight]);
+    return {
+      wallet,
+      mode: 'rescan',
+      fromHeight,
+      blocks: Math.max(0, info.blocks - fromHeight + 1),
+      fetched: 0,
+      balance: await confirmedBalance(node),
+    };
+  }
+
+  // Public descriptors only: scanblocks needs no keys
+  const { descriptors } = await node.walletRpc<{
+    descriptors: ScanDescriptor[];
+  }>('listdescriptors', [false]);
+
+  let scan: { relevant_blocks: string[]; completed?: boolean };
+  try {
+    scan = await node.rpc('scanblocks', [
+      'start',
+      descriptors.map((d) => ({
+        desc: d.desc,
+        range: [0, Math.max(999, d.range?.[1] ?? 999)],
+      })),
+      fromHeight,
+    ]);
+  } catch (error) {
+    throw new Error(
+      `${node.symbol}: scanblocks failed; a pruned node needs blockfilterindex=1 (D38): ${(error as Error).message ?? String(error)}`,
+    );
+  }
+  if (scan.completed === false) {
+    throw new Error(`${node.symbol}: scanblocks did not complete`);
+  }
+
+  const blocks = (
+    await Promise.all(
+      scan.relevant_blocks.map(async (hash) => ({
+        hash,
+        height: (
+          await node.rpc<{ height: number }>('getblockheader', [hash, true])
+        ).height,
+      })),
+    )
+  ).sort((a, b) => a.height - b.height);
+
+  let fetched = 0;
+  for (const { hash, height } of blocks) {
+    if (!(await hasBlock(node, hash))) {
+      await fetchBlock(node, hash, sleep, waitMs);
+      fetched++;
+    }
+    await node.walletRpc('rescanblockchain', [height, height]);
+  }
+
+  return {
+    wallet,
+    mode: 'filters',
+    fromHeight,
+    blocks: blocks.length,
+    fetched,
+    balance: await confirmedBalance(node),
+  };
+};
+
+export const describeRecovery = (symbol: string, r: WalletRecovery) =>
+  `${symbol} node wallet "${r.wallet}" recovered from block ${r.fromHeight} (D40): ` +
+  (r.mode === 'rescan'
+    ? `rescanned ${r.blocks} block(s)`
+    : `${r.blocks} block(s) with its coins in the block filters, ${r.fetched} fetched back from peers`) +
+  `; confirmed balance ${r.balance}`;
