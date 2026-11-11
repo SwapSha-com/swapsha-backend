@@ -153,7 +153,15 @@ run('WalletRecovery (D40, regtest nodes)', () => {
       toUnload.push([nodePort, again]);
       const node = nodeFor(symbol, nodePort, again);
       await ensureSeedWallet(node, { ...options, wallet: again });
-      expect(await trusted(nodePort, again)).toEqual(0);
+      // Knots rescans the last two hours on every import, and regtest
+      // history is minutes old: on the archival node that rescan already
+      // finds the coins, on the pruned node it cannot read them
+      const found = await trusted(nodePort, again);
+      if (pruned) {
+        expect(found).toEqual(0);
+      } else {
+        console.log(`${symbol}: the import's own rescan found ${found}`);
+      }
 
       const result = await recoverSeedWallet(node, {
         wallet: again,

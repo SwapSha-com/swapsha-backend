@@ -263,7 +263,19 @@ export const ensureSeedWallet = async (
     }
 
     const failed = results.filter((r) => !r.success);
-    if (failed.length > 0 || results.length !== expected.length) {
+    // Knots rescans the two hours before "now" on every import. If those
+    // blocks are pruned that rescan fails, yet the descriptors are imported:
+    // the check below confirms they are, and a recovery finds the coins
+    // (seen on the regtest pruned node, Nov 10; the Companion keeps weeks)
+    const rescanOnly =
+      failed.length > 0 &&
+      failed.every((r) =>
+        /Rescan failed for descriptor/.test(r.error?.message ?? ''),
+      );
+    if (
+      (failed.length > 0 && !rescanOnly) ||
+      results.length !== expected.length
+    ) {
       throw new Error(
         redactKeys(
           `${name}: importing the seed descriptors failed: ${failed
@@ -273,7 +285,11 @@ export const ensureSeedWallet = async (
       );
     }
 
-    done.push('filled from seed.dat');
+    done.push(
+      rescanOnly
+        ? 'filled from seed.dat (its import rescan reached pruned blocks)'
+        : 'filled from seed.dat',
+    );
     listed = await listDescriptors();
   }
 

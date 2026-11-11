@@ -37,6 +37,8 @@ const fakeNode = (state: {
   onDisk?: string[];
   descriptors?: Listed[];
   importFails?: string;
+  // Imported, but the rescan that follows reads a pruned block
+  importRescanFails?: string;
 }) => {
   const loaded = state.loaded ?? [];
   const onDisk = state.onDisk ?? [...loaded];
@@ -92,7 +94,11 @@ const fakeNode = (state: {
           active: r.active,
           internal: r.internal,
         }));
-        return requests.map(() => ({ success: true }));
+        return requests.map(() =>
+          state.importRescanFails === undefined
+            ? { success: true }
+            : { success: false, error: { message: state.importRescanFails } },
+        );
       }
       throw new Error(method);
     }),
@@ -334,6 +340,24 @@ describe('NodeWallets (D40)', () => {
       "key '<private key>' is not valid",
     );
     expect((error as Error).message).not.toContain('tprv');
+  });
+
+  test('a pruned import rescan keeps the descriptors and says so', async () => {
+    const { node } = fakeNode({
+      importRescanFails:
+        'Rescan failed for descriptor with timestamp 1794357031. There was an error reading a block from time 1794356981, which is after or within 7200 seconds of key creation',
+    });
+
+    await expect(
+      ensureSeedWallet(node, {
+        wallet: 'swapsha',
+        account: 0,
+        network: 'regtest',
+        master: master('regtest'),
+      }),
+    ).resolves.toEqual(
+      'BTC node wallet "swapsha" created, filled from seed.dat (its import rescan reached pruned blocks); matches seed.dat (84h and 86h, 1h/0h). If a wallet of this name held coins before, run Recover Node Wallets (D40)',
+    );
   });
 
   test('redactKeys covers xprv and tprv', () => {
